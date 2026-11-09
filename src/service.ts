@@ -27,7 +27,7 @@ function view(data: AppData, now: Date, revision: number) {
     expression: face, stage: stage(current, data.memories.filter(m => m.type === 'shared').length),
     today, context: data.context, todayCount: data.events.filter(event => event.date === today).length,
     messages: data.messages.slice(-180), events: data.events.slice(-80),
-    memories: data.memories, feedbackIds: data.feedback.map(row => row.messageId), widgetEnabled: !!data.widgetHash,
+    memories: data.memories, feedbackIds: data.feedback.map(row => row.messageId), widgetEnabled: !!data.widgetHash, widgetDetails: data.widgetDetails === true,
   };
 }
 
@@ -142,6 +142,7 @@ export class Service {
         case 'widget':
           widgetToken = body.enabled === true ? newToken() : undefined;
           data.widgetHash = widgetToken ? digest(widgetToken) : null;
+          data.widgetDetails = !!widgetToken && body.details === true;
           break;
         case 'import':
           if (body.consent !== true) throw new Problem(400, '請先同意啟用備份中的記憶。');
@@ -359,11 +360,18 @@ export class Service {
     const anniversary = days > 1 && today.slice(5) === data.meetDate.slice(5);
     const greeting = anniversary ? '今天是我們的相遇紀念日。' : hour < 6 ? '夜深了。早點休息吧。'
       : hour < 12 ? '早安。睡得還好嗎？' : hour < 18 ? '午安。記得休息一下。' : '晚安。今天辛苦了。';
-    return {
-      name: (data.design ?? defaultDesign).name,
+    const mood = expression(currentState(data, now));
+    const summary = { name: (data.design ?? defaultDesign).name,
       greeting: anniversary ? greeting : data.design?.greeting || greeting,
-      days, anniversary, mood: expression(currentState(data, now)),
-    };
+      days, anniversary, mood };
+    if (!data.widgetDetails) return summary;
+    const selected = activePortrait(data, mood);
+    const portrait = data.portraits?.find(item => item.id === selected);
+    const recent = data.events.findLast(event => !event.legacy);
+    return { ...summary, scene: {
+      portrait: portrait?.image ?? null,
+      interaction: recent ? actionLabels[recent.type] : null,
+    } };
   }
 
   async portrait(key: string, id: unknown) {

@@ -1,4 +1,4 @@
-const shell = 'inori-shell-v3';
+const shell = 'inori-shell-v5';
 const assets = ['/', '/app.js', '/client.js', '/portraits.js', '/style.css', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', event => {

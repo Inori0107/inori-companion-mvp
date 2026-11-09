@@ -34,7 +34,9 @@ function call(handler, url, body, headers = {}) {
 test('Mock HTTP 路徑支援串流、再生成、備份與最小權限 Widget', async () => {
   let now = new Date('2026-11-09T06:00:00Z');
   const handler = apiHandler({ env: {}, store: localStore(), now: () => now });
-  assert.equal((await call(handler, '/api/health')).json.aiConfigured, false);
+  const health = (await call(handler, '/api/health')).json;
+  assert.equal(health.aiConfigured, false);
+  assert.equal(health.portraitDelivery, 'session-json');
   assert.equal((await call(handler, '/api/chat', { id: randomUUID(), message: '早安' }, { origin: 'http://wrong.test' })).status, 403);
   const first = await call(handler, '/api/chat', { id: randomUUID(), message: '早安，祈' }, { accept: 'application/x-ndjson' });
   assert.equal(first.status, 200);
@@ -48,11 +50,26 @@ test('Mock HTTP 路徑支援串流、再生成、備份與最小權限 Widget', 
   const authorization = 'Bearer ' + widget.json.widgetToken;
   const read = await call(handler, '/api/widget', undefined, { authorization });
   assert.deepEqual(Object.keys(read.json).sort(), ['anniversary', 'days', 'greeting', 'mood', 'name']);
+  const source = await readFile(new URL('../public/icon-192.png', import.meta.url));
+  const image = 'data:image/png;base64,' + source.toString('base64');
+  const saved = await call(handler, '/api/state', {
+    action: 'design', expectedVersion: widget.json.designVersion, design: widget.json.design,
+    portraits: [{ name: '日常', kind: 'expression', value: '普通', image }],
+  });
+  assert.equal(saved.status, 200);
+  await call(handler, '/api/state', { action: 'interaction', id: randomUUID(), type: 'hello' });
+  assert.equal((await call(handler, '/api/widget', undefined, { authorization })).json.scene, undefined);
+  const richWidget = await call(handler, '/api/state', { action: 'widget', enabled: true, details: true });
+  const richAuth = { authorization: 'Bearer ' + richWidget.json.widgetToken };
+  assert.equal((await call(handler, '/api/widget', undefined, { authorization })).status, 401);
+  const scene = await call(handler, '/api/widget', undefined, richAuth);
+  assert.deepEqual(scene.json.scene, { interaction: '打招呼', portrait: image });
   const backup = await call(handler, '/api/export');
   assert.equal(backup.json.widgetHash, undefined);
+  assert.equal(backup.json.widgetDetails, undefined);
   assert.equal(backup.json.messages.length, 3);
   await call(handler, '/api/state', { action: 'reset' });
-  assert.equal((await call(handler, '/api/widget', undefined, { authorization })).status, 401);
+  assert.equal((await call(handler, '/api/widget', undefined, richAuth)).status, 401);
   const restored = await call(handler, '/api/state', {
     action: 'import', consent: true, backup: { nickname: '澄', meetDate: '2026-10-01',
       messages: [{ role: 'user', content: '舊紀錄' }], memories: ['我喜歡合唱'], interactions: { '2026-10-02': ['sing'] } },
@@ -142,6 +159,12 @@ test('Supabase Auth / PostgREST 模擬整合，隔離帳號、重新登入、保
   assert.equal(response.headers['Content-Type'], 'image/png');
   assert.equal(response.headers['Cache-Control'], 'no-store');
   assert.deepEqual(response.image, png);
+  const imageURL = '/api/portrait?id=' + uploaded.json.portraits[0].id;
+  const appImage = await call(handler, imageURL, undefined, auth(reader));
+  assert.equal(appImage.headers['Cache-Control'], 'no-store');
+  assert.equal(appImage.json.image, 'data:image/png;base64,' + png.toString('base64'));
+  assert.equal((await call(handler, imageURL, undefined, auth(admin))).status, 404);
+  assert.equal((await call(handler, imageURL)).status, 401);
   assert.equal((await call(handler, path, undefined, auth(admin))).status, 404);
   assert.equal((await call(handler, path)).status, 401);
   assert.equal((await call(handler, '/api/state', { action: 'reset' }, {
@@ -151,8 +174,12 @@ test('Supabase Auth / PostgREST 模擬整合，隔離帳號、重新登入、保
   assert.equal((await call(handler, '/api/design', undefined, auth(reader))).json.design.name, draft.name);
   assert.equal((await call(handler, '/api/session', undefined, auth(admin))).json.memories.length, 1);
   assert.equal((await call(handler, '/api/studio', undefined, auth(reader))).status, 403);
+  assert.equal((await call(handler, '/api/studio-run', {}, auth(reader))).status, 403);
+  const importedTemplate = await call(handler, '/api/design-preview', { format: 'inori-character-design-v1', design: draft }, auth(reader));
+  assert.equal(importedTemplate.status, 200);
+  assert.equal(importedTemplate.json.design.name, draft.name);
   assert.equal((await call(handler, '/api/studio', undefined, auth(admin))).json.cases.length, 52);
-  const trial = await call(handler, '/api/studio/run', { id: randomUUID(), version: 'inori-character-v1.0', model: 'mock', caseId: 'P01' }, auth(admin));
+  const trial = await call(handler, '/api/studio-run', { id: randomUUID(), version: 'inori-character-v1.0', model: 'mock', caseId: 'P01' }, auth(admin));
   assert.equal(trial.status, 200);
   assert.doesNotMatch(JSON.stringify(trial.json), /私有資料測試/);
   const rated = await call(handler, '/api/studio', { action: 'rate', id: trial.json.id, score: 4, tags: [], suggestion: '合成評分' }, auth(admin));

@@ -106,18 +106,24 @@ try {
   const [ordinary, hello, moon] = state.portraits;
   const hero = page.locator('#portraitImage');
   await hero.waitFor();
-  assert.match(await hero.getAttribute('src'), new RegExp(ordinary.id));
+  assert.equal(await hero.getAttribute('data-portrait-id'), ordinary.id);
   await page.locator('[data-tab="touch"]').click();
   await page.locator('[data-touch="hello"]').click();
-  await page.waitForFunction(id => document.querySelector('#portraitImage').getAttribute('src')?.endsWith(id), hello.id);
+  await page.waitForFunction(id => document.querySelector('#portraitImage').dataset.portraitId === id, hello.id);
   await page.locator('[data-tab="chat"]').click();
   await page.locator('#messageInput').fill('一起看月亮。');
   await page.getByRole('button', { name: '送出' }).click();
-  await page.waitForFunction(id => document.querySelector('#portraitImage').getAttribute('src')?.endsWith(id), moon.id);
+  await page.waitForFunction(id => document.querySelector('#portraitImage').dataset.portraitId === id, moon.id);
+  await page.route('**/api/portrait?id=*', route => route.fulfill({
+    status: 503, contentType: 'application/json', body: JSON.stringify({ error: '測試暫停' }),
+  }), { times: 1 });
   await page.reload();
   await page.getByRole('heading', { name: '小澄' }).waitFor();
+  await page.getByText('立繪讀取失敗（HTTP 503）。').waitFor();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await hero.waitFor();
-  assert.match(await hero.getAttribute('src'), new RegExp(moon.id));
+  assert.equal(await hero.getAttribute('data-portrait-id'), moon.id);
+  assert.match(await hero.getAttribute('src'), /^data:image\/png/);
 
   await page.getByRole('button', { name: '設定', exact: true }).click();
   await page.getByText('資料與分享', { exact: true }).click();
@@ -152,7 +158,10 @@ try {
   assert.equal(token.length, 43);
   const widget = await context.request.get(url + '/api/widget', { headers: { Authorization: 'Bearer ' + token } });
   assert.equal(widget.status(), 200);
-  assert.equal((await widget.json()).name, '霧島');
+  const widgetData = await widget.json();
+  assert.equal(widgetData.name, '霧島');
+  assert.match(widgetData.scene.portrait, /^data:image\/png/);
+  assert.equal(widgetData.scene.interaction, '打招呼');
   await page.getByRole('button', { name: '撤銷 Widget 憑證' }).click();
   await page.getByText('憑證已撤銷。', { exact: true }).waitFor();
   assert.equal((await context.request.get(url + '/api/widget', { headers: { Authorization: 'Bearer ' + token } })).status(), 401);
@@ -166,19 +175,25 @@ try {
   assert.match(backup.portraits[0].image, /^data:image\//);
   await page.getByRole('link', { name: '人格校調後台' }).click();
   await page.locator('#studio').waitFor();
+  // Chat and evaluation share the same generation cooldown.
+  await new Promise(resolve => setTimeout(resolve, 850));
+  const trial = page.waitForResponse(response => response.url().endsWith('/api/studio-run'));
   await page.getByRole('button', { name: '執行所選測試' }).click();
+  const trialResponse = await trial;
+  assert.equal(trialResponse.status(), 200, await trialResponse.text());
   await page.getByText('測試已完成。 本次 1 筆。').waitFor();
   await page.locator('#compare').getByRole('button', { name: '人工評分' }).click();
   await page.getByRole('button', { name: '保存評分' }).click();
   await page.locator('#results').getByText(/5 \/ 5/).waitFor();
-  await page.goto(url);
+  await page.goto(url + '/#interact');
   await page.locator('#room').waitFor();
   await page.getByRole('heading', { name: '霧島' }).waitFor();
+  await page.locator('#panel-touch').waitFor();
   await page.setViewportSize({ width: 320, height: 568 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
-    const cache = await caches.open('inori-shell-v3');
+    const cache = await caches.open('inori-shell-v5');
     if (!(await cache.match('/icon-192.png'))) throw new Error('missing PWA icon');
     if (await cache.match('/api/session')) throw new Error('personal API response was cached');
   });
@@ -197,7 +212,7 @@ try {
   await page.getByRole('button', { name: '自訂角色' }).click();
   await editor.getByText('舊版立繪・儲存後同步').waitFor();
   await page.getByRole('button', { name: '儲存角色' }).click();
-  await page.waitForFunction(() => document.querySelector('#portraitImage').getAttribute('src')?.startsWith('/api/portraits/'));
+  await page.waitForFunction(() => Boolean(document.querySelector('#portraitImage').dataset.portraitId));
   assert.equal(await page.evaluate(() => localStorage.getItem('inori-portrait:local')), null);
 
   await openDataSettings();

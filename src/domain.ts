@@ -148,7 +148,7 @@ export type AppData = {
   lastActivity?: 'chat' | 'interaction' | null;
   nickname: string; meetDate: string; zone: string; state: CharacterState; stateDate: string; context: number;
   memories: Memory[]; memoryEvents: MemoryChange[]; messages: Message[]; events: Interaction[];
-  feedback: Feedback[]; journals: Journal[]; widgetHash: string | null;
+  feedback: Feedback[]; journals: Journal[]; widgetHash: string | null; widgetDetails?: boolean;
   usage: { day: string; count: number; lastAt: number };
   pending: { id: string; until: number } | null;
   receipts: { id: string; kind: 'chat' | 'diary' | 'interaction'; targetId?: string }[];
@@ -158,7 +158,7 @@ export function fresh(now = new Date()): AppData {
   return {
     design: null, portraits: null, lastActivity: null, nickname: '', meetDate: dateAt(now), zone: 'Asia/Taipei', state: { ...initialState }, stateDate: dateAt(now), context: 0,
     memories: [], memoryEvents: [], messages: [{ id: randomUUID(), role: 'assistant', content: firstGreeting, at: now.toISOString() }],
-    events: [], feedback: [], journals: [], widgetHash: null, usage: { day: '', count: 0, lastAt: 0 }, pending: null, receipts: [],
+    events: [], feedback: [], journals: [], widgetHash: null, widgetDetails: false, usage: { day: '', count: 0, lastAt: 0 }, pending: null, receipts: [],
   };
 }
 

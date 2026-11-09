@@ -35,7 +35,7 @@
       <div class="silhouette" id="portrait" role="img" aria-label="抽象角色立繪">
         <div class="hair"></div><div class="face"></div><div class="shoulder"></div>
         <img class="hero-portrait" id="portraitImage" alt="" hidden>
-        <div class="portrait-label">可在「自訂角色」新增立繪</div>
+        <div class="portrait-label" id="portraitStatus" role="status">可在「自訂角色」新增立繪</div>
       </div>
       <div class="character-bottom">
         <div><div class="overline" id="characterBase">THE QUIET DIVERGENCE</div><h1 id="characterName">楪祈</h1><p id="greeting"></p></div>
@@ -109,7 +109,9 @@
     <button class="save">儲存設定</button>
     <details class="setting-group">
       <summary>主畫面小工具</summary>
-      <p class="hint">部署後，將 HTTPS 網址與專用憑證填入 Scriptable 腳本。</p>
+      <p class="hint">部署後，將正式 HTTPS 網址與專用憑證填入新版 Scriptable 腳本。</p>
+      <label class="check"><input id="widgetDetails" type="checkbox" checked> 在小工具顯示立繪與最近互動</label>
+      <p class="hint">此選項在產生新憑證時生效。請勿分享憑證。</p>
       <div class="settings-actions">
         <button id="widgetBtn" type="button">產生 Widget 憑證</button>
         <button id="revokeWidget" type="button" hidden>撤銷 Widget 憑證</button>

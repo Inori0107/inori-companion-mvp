@@ -3,6 +3,7 @@
     "target": "ES2023",
     "module": "NodeNext",
     "strict": true,
+    "types": ["node"],
     "rootDir": "src",
     "outDir": "dist",
     "noEmitOnError": true

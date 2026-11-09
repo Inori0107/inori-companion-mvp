@@ -7,7 +7,7 @@ import { validateDesign } from './design.js';
 import { savePortraits } from './portraits.js';
 
 export function exported(data: AppData) {
-  const { widgetHash, pending, usage, receipts, ...profile } = data;
+  const { widgetHash, widgetDetails, pending, usage, receipts, ...profile } = data;
   return { format: 'inori-companion-v2', ...profile };
 }
 

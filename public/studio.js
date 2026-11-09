@@ -133,7 +133,7 @@ $('trialForm').addEventListener('submit', async event => {
       for (const selection of (!batch && b.version ? [a, b] : [a])) {
         if (finished) await sleep(850);
         $('trialStatus').textContent = '執行中 · ' + (caseId || '自訂') + ' · 已完成 ' + finished;
-        const trial = await api('studio/run', { ...selection, id: requestId(), caseId, input, synthetic, state });
+        const trial = await api('studio-run', { ...selection, id: requestId(), caseId, input, synthetic, state });
         studio.runs.push(trial);
         if (!batch) $('compare').append(card(trial, true));
         finished++;

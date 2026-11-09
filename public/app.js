@@ -1,5 +1,5 @@
 import { $, api, bindForm, button, download, node, option, requestId, useAccount } from './client.js';
-import { createPortraitEditor, legacyImages, portraitURL, prepareLegacyPortraits } from './portraits.js';
+import { createPortraitEditor, keepPortraits, legacyImages, loadPortrait, prepareLegacyPortraits } from './portraits.js';
 
 const legacyKey = 'inori-companion-v1';
 const designFormat = 'inori-character-design-v1';
@@ -37,22 +37,51 @@ function clearLegacyPortraits() {
 }
 
 const hero = $('portraitImage');
+let portraitTarget = null;
+let portraitRequest = 0;
+const portraitStatus = $('portraitStatus');
+
 hero.onload = () => {
+  if (!hero.getAttribute('src')) return;
   hero.hidden = false;
   $('portrait').classList.add('loaded');
 };
 hero.onerror = () => {
-  hero.removeAttribute('src');
-  hero.hidden = true;
-  $('portrait').classList.remove('loaded');
+  showPortrait('');
+  portraitStatus.textContent = '圖片無法解碼，請重新上傳 PNG 或 JPG。';
 };
 
-function showPortrait(source) {
+function showPortrait(source, id) {
+  hero.dataset.portraitId = id ?? '';
   if ((hero.getAttribute('src') ?? '') === source) return;
   hero.hidden = true;
   $('portrait').classList.remove('loaded');
   if (source) hero.src = source;
   else hero.removeAttribute('src');
+}
+
+function renderPortrait() {
+  const id = state.activePortraitId;
+  const portraits = state.portraits ?? [];
+  keepPortraits(portraits.map(item => item.id));
+  const legacy = state.portraits == null ? legacyImages(readLocal(portraitKey())) : {};
+  const fallback = legacy[state.expression] || legacy.普通 || '';
+  const target = id || fallback;
+  if (!target) portraitStatus.textContent = portraits.length || Object.keys(legacy).length
+    ? '目前無符合立繪。可設定「普通」當預設。' : '可在「自訂角色」新增立繪';
+  if (target === portraitTarget) return;
+  portraitTarget = target;
+  const request = ++portraitRequest;
+  showPortrait(fallback);
+  if (!id) return;
+  portraitStatus.textContent = '正在載入立繪……';
+  void loadPortrait(id).then(image => {
+    if (request === portraitRequest) showPortrait(image, id);
+  }).catch(error => {
+    if (request !== portraitRequest) return;
+    portraitTarget = null; // Allow retry on the next room refresh.
+    portraitStatus.textContent = '立繪讀取失敗' + (error.status ? '（HTTP ' + error.status + '）' : '') + '。';
+  });
 }
 
 function showLogin() {
@@ -72,6 +101,9 @@ function showLogin() {
   $('messageInput').value = '';
   $('chatStatus').textContent = '';
   $('feelingOptions').hidden = true;
+  portraitTarget = null;
+  portraitRequest++;
+  keepPortraits([]);
   showPortrait('');
   portraitEditor.clear();
   $('settingsForm').reset();
@@ -108,7 +140,19 @@ function selectTab(tab) {
   if (tab === 'diary') void loadDiary();
 }
 
-document.querySelectorAll('[data-tab]').forEach(btn => { btn.onclick = () => selectTab(btn.dataset.tab); });
+document.querySelectorAll('[data-tab]').forEach(btn => {
+  btn.onclick = () => {
+    if (location.hash === '#interact' && btn.dataset.tab !== 'touch') history.replaceState(null, '', location.pathname + location.search);
+    selectTab(btn.dataset.tab);
+  };
+});
+
+function followWidgetLink() {
+  if ($('room').hidden || location.hash !== '#interact') return;
+  selectTab('touch');
+  $('panel-touch').scrollIntoView({ block: 'start' });
+}
+window.addEventListener('hashchange', followWidgetLink);
 document.querySelectorAll('[data-close]').forEach(btn => { btn.onclick = () => $(btn.dataset.close).close(); });
 
 function renderHeader() {
@@ -125,8 +169,7 @@ function renderHeader() {
   $('stage').textContent = state.stage;
   $('touchCount').textContent = state.todayCount + ' 次';
   $('moodText').textContent = state.expression;
-  const images = state.portraits == null ? legacyImages(readLocal(portraitKey())) : {};
-  showPortrait(state.activePortraitId ? portraitURL(state.activePortraitId) : images[state.expression] || images.普通 || '');
+  renderPortrait();
   $('portrait').dataset.expression = state.expression;
   $('portrait').setAttribute('aria-label', state.design.name + '的立繪');
 }
@@ -232,6 +275,7 @@ async function refresh(initial = false) {
     $('retryConnection').hidden = true;
     $('access').hidden = true;
     $('room').hidden = false;
+    if (wasClosed) followWidgetLink();
     $('notice').textContent = '';
     $('rateTags').replaceChildren(...state.feedbackTags.map(tag => option(tag)));
   } catch (error) {
@@ -411,6 +455,7 @@ $('settingsBtn').onclick = () => {
   $('logout').hidden = !health.cloud;
   $('studioLink').hidden = !state.admin;
   $('legacyBtn').hidden = health.cloud || !readLocal(legacyKey);
+  $('widgetDetails').checked = state.widgetEnabled ? state.widgetDetails === true : true;
   $('settingsStatus').textContent = '';
   $('settings').showModal();
 };
@@ -556,7 +601,7 @@ $('importFile').onchange = async () => {
     if (raw?.format === designFormat) {
       if (file.size > 16_000) throw new Error('角色範本檔案過大。');
       const design = Object.fromEntries(Object.keys(designInputs).map(field => [field, raw.design?.[field]]));
-      const result = await api('design/preview', { format: designFormat, design });
+      const result = await api('design-preview', { format: designFormat, design });
       if (epoch !== sessionEpoch || !$('settings').open) return;
       $('settings').close();
       openDesign(result.design);
@@ -585,7 +630,7 @@ settingsAction('resetBtn', async () => {
 
 settingsAction('widgetBtn', async () => {
   if (state.widgetEnabled && !confirm('重新產生後，原本的 Widget 憑證會失效。繼續嗎？')) return;
-  const result = await update({ action: 'widget', enabled: true });
+  const result = await update({ action: 'widget', enabled: true, details: $('widgetDetails').checked });
   $('widgetToken').value = result.widgetToken;
   $('widgetLabel').hidden = false;
   $('widgetToken').select();

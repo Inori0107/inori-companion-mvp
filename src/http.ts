@@ -68,7 +68,7 @@ export function apiHandler({ env = process.env, store, provider = makeProvider, 
       const route = url.pathname;
       const method = req.method;
       if (method === 'GET' && route === '/api/health') return send(res, 200, {
-        ok: true, aiConfigured: Boolean(env.OPENAI_API_KEY), cloud: Boolean(cloud),
+        ok: true, aiConfigured: Boolean(env.OPENAI_API_KEY), cloud: Boolean(cloud), portraitDelivery: 'session-json',
       });
       if (method === 'GET' && route === '/api/widget') {
         const token = req.headers.authorization?.match(/^Bearer ([\w-]{43})$/)?.[1];
@@ -108,6 +108,10 @@ export function apiHandler({ env = process.env, store, provider = makeProvider, 
         await auth.logout(req, res);
         return send(res, 200, { ok: true });
       }
+      if (method === 'GET' && route === '/api/portrait') {
+        const image = await service.portrait(key, url.searchParams.get('id'));
+        return send(res, 200, { image: 'data:' + image.mime + ';base64,' + image.bytes.toString('base64') });
+      }
       if (method === 'GET' && route.startsWith('/api/portraits/')) {
         const image = await service.portrait(key, route.slice('/api/portraits/'.length));
         res.writeHead(200, { 'Content-Type': image.mime, 'Content-Length': image.bytes.length });
@@ -115,7 +119,7 @@ export function apiHandler({ env = process.env, store, provider = makeProvider, 
         return;
       }
       if (method === 'GET' && route === '/api/design') return send(res, 200, await service.shareDesign(key));
-      if (method === 'POST' && route === '/api/design/preview') return send(res, 200, service.previewDesign(await readJson(req)));
+      if (method === 'POST' && (route === '/api/design-preview' || route === '/api/design/preview')) return send(res, 200, service.previewDesign(await readJson(req)));
       if (method === 'GET' && route === '/api/export') return send(res, 200, await service.export(key));
       if (method === 'GET' && route === '/api/diary') return send(res, 200, journalFor(await service.read(key), day(url.searchParams.get('date'))));
       if (method === 'POST' && route === '/api/diary') return send(res, 200, await service.diary(key, await readJson(req)));
@@ -146,7 +150,7 @@ export function apiHandler({ env = process.env, store, provider = makeProvider, 
           });
         }
         if (method === 'POST' && route === '/api/studio') return send(res, 200, await service.saveStudio(await readJson(req)));
-        if (method === 'POST' && route === '/api/studio/run') return send(res, 200, await service.run(key, await readJson(req)));
+        if (method === 'POST' && (route === '/api/studio-run' || route === '/api/studio/run')) return send(res, 200, await service.run(key, await readJson(req)));
       }
       throw new Problem(404, '找不到此功能。');
     } catch (error) {

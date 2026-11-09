@@ -1,4 +1,4 @@
-import { $, button, node, option } from './client.js';
+import { $, api, button, node, option } from './client.js';
 
 const expressions = ['普通', '微笑', '難過', '困惑', '害羞', '疲憊', '平靜'];
 const kinds = { expression: '表情', interaction: '互動動作', keyword: '對話關鍵字' };
@@ -6,20 +6,44 @@ const countLimit = 14;
 const imageLimit = 100 * 1024;
 const accepted = 'image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif';
 
-export function portraitURL(id) { return '/api/portraits/' + encodeURIComponent(id); }
+const raster = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+const saved = new Map();
+
+export function keepPortraits(ids) {
+  const allowed = new Set(ids);
+  for (const id of saved.keys()) if (!allowed.has(id)) saved.delete(id);
+}
+
+export function loadPortrait(id) {
+  if (!saved.has(id)) {
+    const request = api('portrait?id=' + encodeURIComponent(id)).then(({ image }) => {
+      if (typeof image !== 'string' || !raster.test(image)) throw new Error('伺服器未回傳立繪。');
+      return image;
+    }).catch(error => {
+      if (saved.get(id) === request) saved.delete(id);
+      throw error;
+    });
+    saved.set(id, request);
+  }
+  return saved.get(id);
+}
 
 export function legacyImages(raw) {
   return Object.fromEntries(expressions.flatMap(value => {
     const image = raw?.[value];
     return typeof image === 'string' && image.length < 1_800_000 &&
-      /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(image) ? [[value, image]] : [];
+      raster.test(image) ? [[value, image]] : [];
   }));
 }
 
 function readImageFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
+    reader.onload = () => {
+      const image = String(reader.result);
+      const appleFormat = file.name.match(/\.(heic|heif)$/i)?.[1]?.toLowerCase();
+      resolve(appleFormat ? image.replace(/^data:(?:application\/octet-stream|);/, 'data:image/' + appleFormat + ';') : image);
+    };
     reader.onerror = () => reject(new Error('讀取立繪失敗，請重新選擇圖片。'));
     reader.readAsDataURL(file);
   });
@@ -35,21 +59,23 @@ async function compressed(source) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('這個瀏覽器無法處理立繪。');
+  const maxEncoded = Math.floor(imageLimit / 3) * 4;
   for (const maxEdge of [1024, 800, 600, 420, 256]) {
     const ratio = Math.min(1, maxEdge / Math.max(image.naturalWidth, image.naturalHeight));
     canvas.width = Math.max(1, Math.round(image.naturalWidth * ratio));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * ratio));
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-    for (const quality of [0.84, 0.66]) {
-      let data = canvas.toDataURL('image/webp', quality);
-      if (!data.startsWith('data:image/webp') && data.length > imageLimit * 4 / 3) {
-        ctx.globalCompositeOperation = 'destination-over';
-        ctx.fillStyle = '#21192b';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.globalCompositeOperation = 'source-over';
-        data = canvas.toDataURL('image/jpeg', quality);
-      }
-      if (data.startsWith('data:image/') && data.slice(data.indexOf(',') + 1).length <= Math.floor(imageLimit / 3) * 4) return data;
+    const png = canvas.toDataURL('image/png');
+    if (raster.test(png) && png.slice(png.indexOf(',') + 1).length <= maxEncoded) return png;
+    // Keep transparency on artwork. Use JPEG for large photos or if a small PNG still exceeds the limit.
+    if (maxEdge > 420 && !/^data:image\/(?:jpeg|heic|heif);/i.test(source)) continue;
+    ctx.globalCompositeOperation = 'destination-over';
+    ctx.fillStyle = '#21192b';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalCompositeOperation = 'source-over';
+    for (const quality of [0.85, 0.66]) {
+      const jpeg = canvas.toDataURL('image/jpeg', quality);
+      if (raster.test(jpeg) && jpeg.slice(jpeg.indexOf(',') + 1).length <= maxEncoded) return jpeg;
     }
   }
   throw new Error('無法壓縮這張立繪，請換一張較小的圖片。');
@@ -84,13 +110,28 @@ export function createPortraitEditor(actions, onChange) {
     preview.loading = 'lazy';
     const status = node('p', '', 'hint portrait-row-status');
     status.setAttribute('aria-live', 'polite');
+    let previewVersion = 0;
+    preview.onerror = () => {
+      preview.hidden = true;
+      status.textContent = '圖片無法解碼，請重新選擇 PNG 或 JPG。';
+    };
     function showImage() {
-      const src = item.image || item.legacy || (item.id ? portraitURL(item.id) : '');
+      const version = ++previewVersion;
+      const src = item.image || item.legacy;
       preview.hidden = !src;
       if (src) preview.src = src;
       else preview.removeAttribute('src');
       status.textContent = item.legacy ? '舊版立繪・儲存後同步' : item.image ? '圖片已加入草稿'
-        : item.id ? '已儲存' : '尚未選擇圖片';
+        : item.id ? '已儲存，載入圖片中……' : '尚未選擇圖片';
+      if (item.id && !src) void loadPortrait(item.id).then(image => {
+        if (version !== previewVersion) return;
+        preview.src = image;
+        preview.hidden = false;
+        status.textContent = '已儲存';
+      }).catch(error => {
+        if (version !== previewVersion) return;
+        status.textContent = '已儲存，但圖片讀取失敗' + (error.status ? '（HTTP ' + error.status + '）' : '') + '。';
+      });
     }
     showImage();
 
