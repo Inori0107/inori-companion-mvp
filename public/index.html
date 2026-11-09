@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#10111c">
+  <title>INORI — 祈的房間</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="mark">✦ <span>INORI</span><small>PRIVATE ROOM / 01</small></div>
+    <div class="header-actions">
+      <button class="quiet" id="designBtn" hidden>自訂角色</button>
+      <button class="icon-btn" id="settingsBtn" aria-label="設定" hidden>⚙</button>
+    </div>
+  </header>
+  <p class="status" id="notice" role="status"></p>
+  <button class="quiet" id="retryConnection" hidden>重新連線</button>
+  <section class="access" id="access" hidden>
+    <p class="overline">THE QUIET DIVERGENCE</p>
+    <h1>祈的房間</h1>
+    <form id="loginForm" class="stack">
+      <label>電子郵件<input id="email" type="email" autocomplete="username" required></label>
+      <label>密碼<input id="password" type="password" autocomplete="current-password" required></label>
+      <button class="save">登入</button>
+    </form>
+  </section>
+  <main id="room" hidden>
+    <section class="character">
+      <div class="halo"></div>
+      <div class="silhouette" id="portrait" role="img" aria-label="抽象角色立繪">
+        <div class="hair"></div><div class="face"></div><div class="shoulder"></div>
+        <img class="hero-portrait" id="portraitImage" alt="" hidden>
+        <div class="portrait-label">可在「自訂角色」新增立繪</div>
+      </div>
+      <div class="character-bottom">
+        <div><div class="overline" id="characterBase">THE QUIET DIVERGENCE</div><h1 id="characterName">楪祈</h1><p id="greeting"></p></div>
+        <div class="mood"><i></i><span id="moodText"></span></div>
+      </div>
+    </section>
+    <section class="meta">
+      <div><span>相遇</span><strong id="days"></strong></div>
+      <div><span>關係</span><strong id="stage"></strong></div>
+      <div><span>今日互動</span><strong id="touchCount"></strong></div>
+    </section>
+    <nav class="tabs" aria-label="房間分頁">
+      <button data-tab="chat" class="active">✧ 對話</button>
+      <button data-tab="touch">♡ 互動</button>
+      <button data-tab="memory">▤ 記憶</button>
+      <button data-tab="diary">☾ 日記</button>
+    </nav>
+    <section id="panel-chat" class="panel active">
+      <div id="messages" class="messages" role="log" aria-live="polite"></div>
+      <form id="chatForm" class="composer">
+        <input id="messageInput" maxlength="1800" placeholder="想說些什麼……" aria-label="聊天訊息" autocomplete="off" required>
+        <button type="submit" aria-label="送出">➤</button>
+      </form>
+      <p class="status" id="chatStatus" role="status"></p>
+      <button type="button" class="quiet" id="candidate" hidden>查看候選記憶</button>
+      <p class="hint" id="modeHint"></p>
+    </section>
+    <section id="panel-touch" class="panel">
+      <p class="section-label">INTERACTIONS / 日常互動</p>
+      <div class="touch-grid">
+        <button data-touch="hello">✦<span>打招呼</span></button>
+        <button data-touch="head">✧<span>摸摸頭</span></button>
+        <button data-touch="hand">♡<span>牽手</span></button>
+        <button data-touch="hug">☁<span>擁抱</span></button>
+        <button data-touch="listen">♪<span>聽歌</span></button>
+        <button data-touch="sing">♫<span>一起唱歌</span></button>
+        <button data-touch="feeling">◇<span>分享心情</span></button>
+      </div>
+      <div class="toolbar feeling-options" id="feelingOptions" aria-label="選擇想分享的心情" hidden>
+        <button class="quiet" data-feeling="good">今天不錯</button>
+        <button class="quiet" data-feeling="tired">有點累</button>
+        <button class="quiet" data-feeling="down">有點低落</button>
+      </div>
+      <p class="reaction" id="reaction" role="status">「……想做什麼？」</p>
+      <button class="quiet" id="saveShared" hidden>檢視並保存共同記憶</button>
+    </section>
+    <section id="panel-memory" class="panel">
+      <p class="section-label">MEMORY BOOK / 重要的事</p>
+      <button class="quiet" id="newMemory">新增記憶</button>
+      <div id="memoryList" class="memory-list"></div>
+      <p class="hint">每筆記憶都需確認，才會依相關性提供給模型。修改或刪除內容後，模型會從新的對話上下文開始。</p>
+    </section>
+    <section id="panel-diary" class="panel">
+      <p class="section-label">JOURNAL / 角色日記</p>
+      <div class="toolbar"><label>日期 <input id="diaryDate" type="date"></label><button id="generateDiary" class="quiet">生成 AI 日記</button></div>
+      <p class="hint" id="diaryKind"></p>
+      <div id="diaryText" class="diary"></div>
+      <p id="diaryHint" class="hint"></p>
+    </section>
+  </main>
+  <footer>私人同人 AI 角色互動 · 非官方</footer>
+</div>
+
+<dialog id="settings">
+  <form id="settingsForm" class="settings-body">
+    <div class="settings-head"><h2>房間設定</h2><button type="button" data-close="settings" aria-label="關閉">✕</button></div>
+    <p class="hint" id="account"></p>
+    <label>暱稱<input id="nickname" maxlength="24"></label>
+    <label>相遇日期<input id="meetDate" type="date" required></label>
+    <label>時區<input id="zone" maxlength="100" placeholder="Asia/Taipei" required></label>
+    <button class="save">儲存設定</button>
+    <details class="setting-group">
+      <summary>主畫面小工具</summary>
+      <p class="hint">部署後，將 HTTPS 網址與專用憑證填入 Scriptable 腳本。</p>
+      <div class="settings-actions">
+        <button id="widgetBtn" type="button">產生 Widget 憑證</button>
+        <button id="revokeWidget" type="button" hidden>撤銷 Widget 憑證</button>
+      </div>
+      <div class="widget-secret stack" id="widgetLabel" hidden>
+        <label>Widget 憑證（僅顯示這一次）<input id="widgetToken" readonly></label>
+        <button type="button" class="quiet" id="copyWidget">複製憑證</button>
+      </div>
+    </details>
+    <details class="setting-group">
+      <summary>資料與分享</summary>
+      <p class="hint">角色範本可分享文字設定。私人備份包含聊天、記憶與立繪。匯入時會依檔案格式開啟對應流程。</p>
+      <div class="settings-actions">
+        <button id="importData" type="button">匯入檔案</button>
+        <input id="importFile" type="file" accept="application/json,.json" hidden>
+        <button id="shareDesign" type="button">匯出角色範本</button>
+        <button id="exportBtn" type="button">匯出私人備份</button>
+        <button id="legacyBtn" type="button" hidden>遷移原型資料</button>
+      </div>
+      <div class="settings-actions data-danger">
+        <button id="resetBtn" type="button" class="danger">清除房間資料</button>
+      </div>
+    </details>
+    <div class="settings-actions">
+      <a id="studioLink" href="/studio.html" hidden>人格校調後台</a>
+      <button id="logout" type="button" hidden>登出</button>
+    </div>
+    <p class="status" id="settingsStatus" role="status"></p>
+  </form>
+</dialog>
+
+<dialog id="designDialog" aria-labelledby="designTitle">
+  <form id="designForm" class="settings-body">
+    <div class="settings-head"><h2 id="designTitle">自訂角色</h2><button type="button" data-close="designDialog" aria-label="關閉">✕</button></div>
+    <label>角色基礎<select id="designBase"><option value="inori">楪祈・IF</option><option value="original">原創角色</option></select></label>
+    <label>角色名稱<input id="designName" maxlength="24" required></label>
+    <label>問候語<input id="designGreeting" maxlength="120" placeholder="留空會使用預設問候"></label>
+    <div class="design-preview" aria-label="角色預覽">
+      <p class="overline" id="previewBase"></p>
+      <strong id="previewName"></strong>
+      <p id="previewGreeting"></p>
+    </div>
+    <details class="setting-group" id="designWriting">
+      <summary>個性與世界觀</summary>
+      <div class="stack">
+        <label>世界觀<textarea id="designWorld" maxlength="500" rows="3" placeholder="角色在什麼樣的世界生活？"></textarea></label>
+        <label>個性<textarea id="designPersonality" maxlength="400" rows="3" placeholder="例如：冷靜、好奇、重視承諾"></textarea></label>
+        <label>說話方式<textarea id="designVoice" maxlength="300" rows="2" placeholder="例如：用短句，不主動追問"></textarea></label>
+      </div>
+    </details>
+    <section class="setting-group" aria-labelledby="portraitHeading">
+      <h3 id="portraitHeading">立繪</h3>
+      <p class="hint">逐張選擇圖片，指定表情、互動或對話關鍵字。按下方「儲存角色」後才會套用，登入同一帳號的裝置可共用。</p>
+      <div id="portraitRows" class="portrait-rows"></div>
+      <button class="quiet" id="addPortrait" type="button">＋ 新增一張立繪</button>
+    </section>
+    <button class="quiet" id="restoreDesign" type="button">載入預設角色文字</button>
+    <p class="hint">角色文字和立繪會一起儲存。變更角色文字後會開啟新的對話上下文，歷史和記憶仍留在房間。</p>
+    <p class="status" id="designStatus" role="status"></p>
+    <button class="save" id="saveDesign" type="submit">儲存角色</button>
+  </form>
+</dialog>
+
+<dialog id="memoryDialog">
+  <form id="memoryForm" class="settings-body">
+    <div class="settings-head"><h2>記憶</h2><button type="button" data-close="memoryDialog" aria-label="關閉">✕</button></div>
+    <label>類型<select id="memoryType">
+      <option value="core">核心記憶</option><option value="event">事件記憶</option>
+      <option value="temporary">短期脈絡</option><option value="shared" hidden>共同記憶</option>
+    </select></label>
+    <label>內容<textarea id="memoryInput" maxlength="400" rows="4" required></textarea></label>
+    <label>重要性<input id="importance" type="number" min="1" max="5" value="3" required></label>
+    <label>到期日（短期記憶必填）<input id="expiry" type="date"></label>
+    <label class="check"><input id="memoryConsent" type="checkbox" required> 我同意保存此記憶，並依相關性提供給模型。</label>
+    <button class="save">保存記憶</button>
+    <p class="status" id="memoryStatus" role="status"></p>
+  </form>
+</dialog>
+
+<dialog id="rateDialog">
+  <form id="rateForm" class="settings-body">
+    <div class="settings-head"><h2>回覆評分</h2><button type="button" data-close="rateDialog" aria-label="關閉">✕</button></div>
+    <label>分數（0–5）<input id="rating" type="number" min="0" max="5" value="5" required></label>
+    <label>問題標籤（可多選）<select id="rateTags" multiple size="5"></select></label>
+    <label>改善建議<textarea id="suggestion" maxlength="400" rows="2"></textarea></label>
+    <label class="check"><input id="rateConsent" type="checkbox" required> 我同意在自己的評分紀錄保存這段對話。</label>
+    <button class="save">保存評分</button>
+    <p class="status" id="rateStatus" role="status"></p>
+  </form>
+</dialog>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

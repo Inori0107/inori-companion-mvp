@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#10111c">
+  <title>INORI — 人格校調</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app studio">
+  <header><div class="mark">✦ <span>INORI</span><small>CHARACTER STUDIO</small></div><a href="/">回房間</a></header>
+  <h1>人格校調</h1>
+  <p class="status" id="notice" role="status"></p>
+  <main id="studio" hidden>
+    <section class="studio-card">
+      <h2>角色版本</h2>
+      <div class="toolbar"><select id="versions" aria-label="現有版本"></select><button class="quiet" id="activate">啟用所選版本</button></div>
+      <p class="hint" id="active"></p>
+      <p class="hint">初始原作資料見 <a id="canonSource" target="_blank" rel="noopener">《罪惡王冠》官方角色頁</a>。</p>
+      <details>
+        <summary>複製所選版本並編輯</summary>
+        <form id="personaForm" class="stack">
+          <label>角色規則、CANON 與 IF（JSON）<textarea id="config" rows="14" required></textarea></label>
+          <label>原創示範對話與標籤（JSON）<textarea id="examples" rows="10" required></textarea></label>
+          <label>校調原因<input id="reason" maxlength="500" required></label>
+          <label class="check"><input id="activateNew" type="checkbox"> 建立後啟用</label>
+          <button class="save">建立新版本</button>
+          <p class="status" id="personaStatus" role="status"></p>
+        </form>
+      </details>
+    </section>
+    <section class="studio-card">
+      <h2>對照與回歸測試</h2>
+      <form id="trialForm" class="stack">
+        <label>測試題<select id="case"></select></label>
+        <p class="hint" id="caseDetails"></p>
+        <div id="syntheticFields">
+          <label>合成測試訊息<textarea id="trialInput" maxlength="1800" rows="3"></textarea></label>
+          <label class="check"><input type="checkbox" id="synthetic"> 我確認只提供合成資料。</label>
+        </div>
+        <div class="studio-grid">
+          <label>版本 A<select id="versionA"></select></label>
+          <label>模型 A<select id="modelA"></select></label>
+          <label>版本 B（選填）<select id="versionB"></select></label>
+          <label>模型 B<select id="modelB"></select></label>
+        </div>
+        <div class="studio-grid">
+          <label>信任<input id="trust" type="number" min="0" max="100" value="10" required></label>
+          <label>熟悉<input id="familiarity" type="number" min="0" max="100" value="8" required></label>
+          <label>情緒<input id="mood" type="number" min="-100" max="100" value="0" required></label>
+          <label>精力<input id="energy" type="number" min="0" max="100" value="70" required></label>
+          <label>舒適<input id="comfort" type="number" min="0" max="100" value="18" required></label>
+        </div>
+        <div class="toolbar">
+          <button class="save" id="run" value="selected">執行所選測試</button>
+          <button class="quiet" id="runSuite" value="suite">執行 50 題＋保留題（A）</button>
+          <button class="quiet" type="button" id="stop" disabled>停止批次</button>
+        </div>
+        <p class="status" id="trialStatus" role="status"></p>
+      </form>
+      <div class="studio-results studio-grid" id="compare"></div>
+    </section>
+    <section class="studio-card">
+      <h2>評測報表與人工評分</h2>
+      <p class="hint">加權分數依已評分題目的最新分數計算。每個面向都須有人評才會顯示總分；測試覆蓋率會另外顯示。</p>
+      <div class="toolbar">
+        <label>版本<select id="reportVersion"></select></label>
+        <label>模型<select id="reportModel"></select></label>
+        <button class="quiet" id="downloadRuns">匯出合成評測</button>
+      </div>
+      <div id="report"></div>
+      <div class="studio-results" id="results"></div>
+    </section>
+  </main>
+</div>
+<dialog id="rateDialog">
+  <form id="rateForm" class="settings-body">
+    <div class="settings-head"><h2>人工評分</h2><button type="button" id="closeRate" aria-label="關閉">✕</button></div>
+    <label>分數（0–5）<input id="rating" type="number" min="0" max="5" required></label>
+    <label>問題標籤（可多選）<select id="tags" multiple size="5"></select></label>
+    <label>校調建議<textarea id="notes" maxlength="400" rows="3"></textarea></label>
+    <button class="save">保存評分</button>
+    <p class="status" id="rateStatus" role="status"></p>
+  </form>
+</dialog>
+<script type="module" src="/studio.js"></script>
+</body>
+</html>

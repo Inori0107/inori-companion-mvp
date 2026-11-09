@@ -1,0 +1,22 @@
+{
+  "name": "inori-companion",
+  "version": "1.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "dev": "npm run build && node --env-file-if-exists=.env server.mjs",
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "test:browser": "npm run build && node tests/browser.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "22.16.0",
+    "playwright-core": "1.57.0",
+    "typescript": "5.9.3"
+  }
+}
