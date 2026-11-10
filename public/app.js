@@ -118,8 +118,7 @@ function showLogin() {
   $('retryConnection').hidden = true;
   $('access').hidden = false;
   $('password').value = '';
-  $('widgetToken').value = '';
-  $('widgetLabel').hidden = true;
+  clearNativePair();
   document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
 }
 
@@ -142,18 +141,8 @@ function selectTab(tab) {
 }
 
 document.querySelectorAll('[data-tab]').forEach(btn => {
-  btn.onclick = () => {
-    if (location.hash === '#interact' && btn.dataset.tab !== 'touch') history.replaceState(null, '', location.pathname + location.search);
-    selectTab(btn.dataset.tab);
-  };
+  btn.onclick = () => selectTab(btn.dataset.tab);
 });
-
-function followWidgetLink() {
-  if ($('room').hidden || location.hash !== '#interact') return;
-  selectTab('touch');
-  $('panel-touch').scrollIntoView({ block: 'start' });
-}
-window.addEventListener('hashchange', followWidgetLink);
 document.querySelectorAll('[data-close]').forEach(btn => { btn.onclick = () => $(btn.dataset.close).close(); });
 
 function renderHeader() {
@@ -241,8 +230,9 @@ function render(scroll = true, previous) {
   if (changed('memories')) renderMemories();
   renderInteraction();
   $('candidate').hidden = !candidate;
-  $('revokeWidget').hidden = !state.widgetEnabled;
-  $('widgetBtn').textContent = state.widgetEnabled ? '重新產生 Widget 憑證' : '產生 Widget 憑證';
+  $('nativePairBtn').textContent = state.nativeWidgetEnabled ? '重新配對 iPhone' : '產生 iPhone 配對碼';
+  $('revokeNativeWidget').hidden = !state.nativeWidgetEnabled && !state.nativePairPending;
+  if (!state.nativePairPending) clearNativePair();
   if (!$('diaryDate').value || (previous && $('diaryDate').value === previous.today)) $('diaryDate').value = state.today;
   if (previous && (changed('events') || state.today !== previous.today) && $('panel-diary').classList.contains('active')) void loadDiary();
 }
@@ -251,7 +241,7 @@ function apply(result, scroll = true) {
   if (state && result.revision < state.revision) return;
   const previous = state;
   if (previous && result.context !== previous.context) candidate = undefined;
-  const { widgetToken, candidate: offered, ...data } = result;
+  const { nativePairCode, candidate: offered, ...data } = result;
   state = { design: defaultDesign, ...previous, ...data };
   render(scroll, previous);
 }
@@ -280,7 +270,6 @@ async function refresh(initial = false) {
     $('retryConnection').hidden = true;
     $('access').hidden = true;
     $('room').hidden = false;
-    if (wasClosed) followWidgetLink();
     $('notice').textContent = '';
     $('rateTags').replaceChildren(...state.feedbackTags.map(tag => option(tag)));
   } catch (error) {
@@ -458,7 +447,6 @@ $('settingsBtn').onclick = () => {
   $('logout').hidden = !health.cloud;
   $('studioLink').hidden = !state.admin;
   $('legacyBtn').hidden = health.cloud || !readLocal(legacyKey);
-  $('widgetDetails').checked = state.widgetEnabled ? state.widgetDetails === true : true;
   $('settingsStatus').textContent = '';
   $('settings').showModal();
 };
@@ -468,10 +456,7 @@ bindForm('settingsForm', 'settingsStatus', async () => {
   $('settings').close();
 }, error => { if (error.status === 401) sessionError(error); });
 
-$('settings').addEventListener('close', () => {
-  $('widgetToken').value = '';
-  $('widgetLabel').hidden = true;
-});
+$('settings').addEventListener('close', clearNativePair);
 
 function designValues() {
   return Object.fromEntries(Object.entries(designInputs).map(([field, id]) => [field, $(id).value.trim()]));
@@ -632,29 +617,33 @@ settingsAction('resetBtn', async () => {
   if ($('panel-diary').classList.contains('active')) void loadDiary();
 });
 
-settingsAction('widgetBtn', async () => {
-  if (state.widgetEnabled && !confirm('重新產生後，原本的 Widget 憑證會失效。繼續嗎？')) return;
-  const result = await update({ action: 'widget', enabled: true, details: $('widgetDetails').checked });
-  $('widgetToken').value = result.widgetToken;
-  $('widgetLabel').hidden = false;
-  $('widgetToken').select();
+function clearNativePair() {
+  $('nativePairCode').value = '';
+  $('nativePairLabel').hidden = true;
+}
+
+settingsAction('nativePairBtn', async () => {
+  if (state.nativeWidgetEnabled && !confirm('新的 iPhone 完成配對後，原本的配對會失效。繼續嗎？')) return;
+  const result = await update({ action: 'nativePair' });
+  if (!$('settings').open || !state?.nativePairPending || !result.nativePairCode) return;
+  $('nativePairCode').value = location.origin + '/#pair=' + result.nativePairCode;
+  $('nativePairLabel').hidden = false;
+  $('nativePairCode').select();
 });
 
-$('copyWidget').onclick = async () => {
+$('copyNativePair').onclick = async () => {
   try {
-    await navigator.clipboard.writeText($('widgetToken').value);
-    $('settingsStatus').textContent = '已複製 Widget 憑證。';
+    await navigator.clipboard.writeText($('nativePairCode').value);
+    $('settingsStatus').textContent = '已複製。請貼到 iPhone 的 INORI App。';
   } catch {
-    $('widgetToken').select();
-    $('settingsStatus').textContent = '請長按已選取的憑證並複製。';
+    $('nativePairCode').select();
+    $('settingsStatus').textContent = '請長按已選取的配對資訊並複製。';
   }
 };
 
-settingsAction('revokeWidget', async () => {
-  await update({ action: 'widget', enabled: false });
-  $('widgetToken').value = '';
-  $('widgetLabel').hidden = true;
-  $('settingsStatus').textContent = '憑證已撤銷。';
+settingsAction('revokeNativeWidget', async () => {
+  await update({ action: 'revokeNativeWidget' });
+  $('settingsStatus').textContent = 'iPhone 配對已撤銷。';
 });
 
 async function start() {

@@ -8,6 +8,13 @@ import { Service } from './service.js';
 import { localStore, supabaseStore, type Store } from './storage.js';
 
 const bodyLimit = 4_000_000;
+const widgetToken = /^[A-Za-z0-9_-]{43}$/;
+function bearer(req: IncomingMessage) {
+  const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+  if (!token || !widgetToken.test(token)) throw new Problem(401, '需要有效的小工具憑證。');
+  return token;
+}
+
 function send(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
@@ -68,13 +75,8 @@ export function apiHandler({ env = process.env, store, provider = makeProvider, 
       const route = url.pathname;
       const method = req.method;
       if (method === 'GET' && route === '/api/health') return send(res, 200, {
-        ok: true, aiConfigured: Boolean(env.OPENAI_API_KEY), cloud: Boolean(cloud), portraitDelivery: 'session-json',
+        ok: true, aiConfigured: Boolean(env.OPENAI_API_KEY), cloud: Boolean(cloud), portraitDelivery: 'session-json', nativeWidget: true,
       });
-      if (method === 'GET' && route === '/api/widget') {
-        const token = req.headers.authorization?.match(/^Bearer ([\w-]{43})$/)?.[1];
-        if (!token) throw new Problem(401, '需要有效的小工具憑證。');
-        return send(res, 200, await service.widget(token));
-      }
       if (method !== 'GET' && method !== 'POST') throw new Problem(405, '此方法不受支援。');
 
       let requestOrigin: URL;
@@ -86,6 +88,18 @@ export function apiHandler({ env = process.env, store, provider = makeProvider, 
         throw new Problem(403, '來源不正確。');
       }
       if (!cloud && env.OPENAI_API_KEY && !localAllowed) throw new Problem(403, '本機 AI 僅接受此電腦的請求。');
+      // Native requests authenticate with their own credentials and do not use browser cookies.
+      if (route === '/api/widget-native' || route === '/api/widget-pair') {
+        if (req.headers.origin && req.headers.origin !== requestOrigin.origin) throw new Problem(403, '來源不正確。');
+        if (route === '/api/widget-native') {
+          const token = bearer(req);
+          return send(res, 200, await service.nativeWidget(token, method === 'POST' ? await readJson(req) : undefined));
+        }
+        if (method !== 'POST') throw new Problem(405, '此方法不受支援。');
+        const { code } = await readJson(req);
+        if (typeof code !== 'string' || !widgetToken.test(code)) throw new Problem(400, '配對碼格式不正確。');
+        return send(res, 200, await service.pairWidget(code));
+      }
       if (method === 'POST' && req.headers.origin !== requestOrigin.origin) throw new Problem(403, '來源不正確。');
       if (method === 'POST' && route === '/api/login') {
         const user = await auth.login(await readJson(req), res);
@@ -109,17 +123,10 @@ export function apiHandler({ env = process.env, store, provider = makeProvider, 
         return send(res, 200, { ok: true });
       }
       if (method === 'GET' && route === '/api/portrait') {
-        const image = await service.portrait(key, url.searchParams.get('id'));
-        return send(res, 200, { image: 'data:' + image.mime + ';base64,' + image.bytes.toString('base64') });
-      }
-      if (method === 'GET' && route.startsWith('/api/portraits/')) {
-        const image = await service.portrait(key, route.slice('/api/portraits/'.length));
-        res.writeHead(200, { 'Content-Type': image.mime, 'Content-Length': image.bytes.length });
-        res.end(image.bytes);
-        return;
+        return send(res, 200, { image: await service.portrait(key, url.searchParams.get('id')) });
       }
       if (method === 'GET' && route === '/api/design') return send(res, 200, await service.shareDesign(key));
-      if (method === 'POST' && (route === '/api/design-preview' || route === '/api/design/preview')) return send(res, 200, service.previewDesign(await readJson(req)));
+      if (method === 'POST' && route === '/api/design-preview') return send(res, 200, service.previewDesign(await readJson(req)));
       if (method === 'GET' && route === '/api/export') return send(res, 200, await service.export(key));
       if (method === 'GET' && route === '/api/diary') return send(res, 200, journalFor(await service.read(key), day(url.searchParams.get('date'))));
       if (method === 'POST' && route === '/api/diary') return send(res, 200, await service.diary(key, await readJson(req)));
@@ -150,7 +157,7 @@ export function apiHandler({ env = process.env, store, provider = makeProvider, 
           });
         }
         if (method === 'POST' && route === '/api/studio') return send(res, 200, await service.saveStudio(await readJson(req)));
-        if (method === 'POST' && (route === '/api/studio-run' || route === '/api/studio/run')) return send(res, 200, await service.run(key, await readJson(req)));
+        if (method === 'POST' && route === '/api/studio-run') return send(res, 200, await service.run(key, await readJson(req)));
       }
       throw new Problem(404, '找不到此功能。');
     } catch (error) {

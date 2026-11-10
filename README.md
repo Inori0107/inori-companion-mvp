@@ -33,10 +33,10 @@ npm run dev
 - **記憶**。新增、編輯、刪除、重要性、來源與到期管理。核心、事件與短期記憶由使用者確認。以「請記住：內容」可建立當次候選。共同記憶可從有意義的已保存互動中選擇加入。聊天按中文雙字、詞、日期、類型與重要性取最多六筆。刪除、過期與內容更正會切換上下文版本並移除可能受影響的評分副本。既有聊天仍可在歷史回顧，模型從新上下文開始。
 - **互動與日記**。網頁提供摸頭、牽手、擁抱、唱歌。啟用 OpenAI 後，每次互動依角色設定、關係、當下狀態與近期脈絡生成台詞、表情和是否接受。伺服器維護關係進度與互動界線，婉拒時使用表情圖或預設立繪。唱歌以文字呈現。未設定金鑰、超出生成配額或模型回覆無效時使用依狀態決定的備用台詞。舊互動紀錄仍可回顧。日記可回看日期，區分固定示範、事件摘要和 AI 日記。AI 日記由模型從該日真實事件選擇代表事件與受限結語，再由伺服器驗證並組成文字。
 - **校調**。管理者可複製和發佈角色版本，編輯 CANON、來源、IF、語氣規則與示範對話。可手動輸入五維狀態，比較兩個模型或版本。內附 50 題與兩個獨立的多輪情境，可批次執行並保存模型、版本、狀態、形式檢查與人工評分。私人聊天評分留在自己的房間資料。後台題庫與自訂情境使用合成資料。
-- **手機**。沿用原型的深色介面，加入安全區域、PWA 安裝入口、可依表情與接受的動作切換的立繪與 Scriptable。PWA 離線快取靜態介面。聊天、記憶與同步需要連線。
+- **手機**。手機網頁支援安全區域與 PWA 安裝。原生 iPhone 小工具可顯示同一間房的回覆與立繪，也可直接執行四種互動。PWA 離線快取靜態介面，聊天與同步需要連線。
 - **同步與備份**。雲端以同一帳號取回房間資料，前景每 15 秒與重新取得焦點時同步。房間顯示最近 180 則聊天，可從「設定 → 資料與分享」匯出完整紀錄。在空白房間可匯入聊天、有效的手動記憶、互動歷史、角色設定、基本設定及立繪。同來源的本機舊版瀏覽器可選「遷移原型資料」。其他來源可先匯出原型 JSON。匯入歷史保留為回顧，既有狀態、評分、AI 日記、共同記憶關聯與歷史上下文不重新啟用；歷史互動不參與新 AI 日記。清除房間會撤銷 Widget 憑證、清除房間紀錄及立繪，保留當日用量，Supabase 帳號仍可登入。
 
-瀏覽器呼叫 Node API。伺服器確認身分後，從帳號房間載入近期訊息、有效記憶與角色狀態，組合版本化人格、個人角色素材和原創示例，再呼叫 Mock 或 OpenAI。雲端使用 Supabase Auth 和 PostgreSQL。資料以每個帳號一份 JSONB 文件保存，校調版本與合成評測另存。版本欄位讓多個 Vercel 執行個體以條件更新避免覆寫。RLS 與權限限制直接存取，後端根據已驗證的 Auth 使用者 ID 決定房間。Widget 憑證是可撤銷的隨機唯讀 Bearer token，資料庫只保存雜湊值。
+瀏覽器呼叫 Node API。伺服器確認身分後，從帳號房間載入近期訊息、有效記憶與角色狀態，組合版本化人格、個人角色素材和原創示例，再呼叫 Mock 或 OpenAI。雲端使用 Supabase Auth 和 PostgreSQL。資料以每個帳號一份 JSONB 文件保存，校調版本與合成評測另存。版本欄位讓多個 Vercel 執行個體以條件更新避免覆寫。RLS 與權限限制直接存取。iPhone 小工具憑證可讀取房間摘要及執行四種互動，使用者可在網頁撤銷。資料庫只保存配對碼與憑證的雜湊。
 
 | 路徑 | 用途 |
 | --- | --- |
@@ -46,11 +46,11 @@ npm run dev
 | `src/evaluations.ts` | 50 題、保留多輪情境、評分權重 |
 | `src/auth.ts`、`src/storage.ts`、`src/http.ts` | 驗證、資料儲存、請求邊界 |
 | `supabase/migrations/`、`vercel.json`、`api/` | migration 與部署入口 |
-| `scriptable/InoriWidget.js`、`tests/` | iPhone Widget 腳本與測試 |
+| `ios/`、`tests/` | iPhone App、原生小工具與自動測試 |
 
 ## Supabase 與 Vercel 部署
 
-1. 建立 Supabase 專案，在 SQL Editor 執行 `supabase/migrations/202611090001_inori_documents.sql`，或透過 Supabase CLI 對已連結專案執行 migration。確認 Data API 開啟。建立電子郵件已確認的私人帳號，使用 Email/Password 登入並關閉公開註冊。[Supabase 密碼登入文件](https://supabase.com/docs/guides/auth/passwords)
+1. 建立 Supabase 專案，依序執行 `supabase/migrations/` 內的 SQL。確認 Data API 開啟。建立電子郵件已確認的私人帳號，使用 Email/Password 登入並關閉公開註冊。既有站點可在新版上線後套用 `202611100001_native_widget.sql`，清除舊小工具憑證並建立 iPhone 配對索引。[Supabase 密碼登入文件](https://supabase.com/docs/guides/auth/passwords)
 2. 將本專案放入自己的版本庫，Vercel 匯入此目錄作為專案根目錄，使用 Node.js 22 與預設的 `vercel.json`。Vercel 部署的 `APP_ORIGIN` 應填實際開啟的單一 HTTPS origin，包含協定與網域。Production 與 Preview 若都使用，請分別指定相符網域，並使用適合該環境的資料庫。[Vercel Node.js runtime 文件](https://vercel.com/docs/functions/runtimes/node-js)
 3. 填妥以下伺服器環境變數後部署。登入測試兩個不同帳號及同帳號兩部裝置，確認互相隔離與同步。啟用 OpenAI 時，先用少量對話與合成題確認模型、串流、費用與回覆品質。
 
@@ -72,12 +72,10 @@ npm run dev
 
 聊天、重生、AI 互動、日記與評測共用生成配額，同一帳號一次只能有一個生成，已送出的生成嘗試會計入配額。完整套件需要 52 筆配額。各請求有輸入、上下文、輸出 token 與逾時限制。正式部署可使用 OpenAI 專案專用 Key 並查看專案用量。清除房間的刪除作用於目前應用資料庫，服務供應商依各自設定管理歷史備份。
 
-## iPhone 與 Scriptable
+## iPhone 與原生小工具
 
 - Safari 開啟部署後的 HTTPS 網址，在分享選單選「加入主畫面」。
-- 用 iPhone 開啟正式網站，從「設定 → 主畫面小工具」勾選「在小工具顯示立繪與最近互動」，再產生專用 `WIDGET_TOKEN`。舊憑證仍只會提供問候、角色名稱等摘要。重新產生會讓上一個憑證失效。
-- 安裝 Scriptable，貼入新版 `scriptable/InoriWidget.js`，填入正式 HTTPS `CHAT_URL` 和 `WIDGET_TOKEN`。可設定備用的 `MEET_DATE` 與 `CHARACTER_NAME`。先在 Scriptable 按執行看中尺寸預覽，再於主畫面加入中尺寸 Widget 並選取這份腳本。
-- 連線後顯示房間立繪與最近互動的名稱。點「互動」會開啟房間的互動分頁，互動在房間內完成。連線出錯時會顯示原因和本機備用台詞；可選擇在 Scriptable 本機文件目錄放入自己的 `inori.png`。iOS 決定主畫面更新時機。
+- 安裝原生 INORI App 後，從正式網站的「房間設定 → 主畫面小工具」產生 iPhone 配對碼，複製配對資訊到 App。加入中尺寸小工具後，可在桌面直接互動。安裝與續簽步驟請見 [iPhone 安裝說明](ios/README.md)。
 
 ## 驗證與後續
 
@@ -93,4 +91,4 @@ npm run test:browser
 
 測試涵蓋 AI 互動關係輸入、婉拒與換圖、立繪儲存與授權、Widget、既有備份與 Supabase 模擬整合。資料庫沿用 v1.0 已在本機 PostgreSQL 17 驗證的 migration。題庫的 Mock 執行可驗證測試流程，角色語氣與記憶品質仍需以實際模型結果和人工評分驗收。
 
-此交付尚待實際 OpenAI、Supabase、Vercel 部署和 iPhone Safari／Scriptable 實機驗收。下一步是在受控雲端環境完成同帳號跨裝置流程、Widget 撤銷與記憶刪除驗收，然後以實際選定模型執行 50 題與保留多輪案例並人工評分。
+正式部署後，使用同一帳號在 iPhone 配對，確認桌面互動能同步到網頁並驗證撤銷。角色語氣可用實際選定的模型跑題庫，再人工評分。

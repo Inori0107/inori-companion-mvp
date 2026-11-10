@@ -4,10 +4,11 @@ import { join } from 'node:path';
 import { Problem } from './domain.js';
 
 export type Row<T> = { revision: number; data: T };
+type WidgetHashField = 'nativeWidgetHash' | 'nativePairHash';
 export interface Store {
   get<T>(key: string): Promise<Row<T> | null>;
   put<T>(key: string, expected: number | null, data: T): Promise<boolean>;
-  widget<T>(hash: string): Promise<T | null>;
+  findRoom<T>(field: WidgetHashField, hash: string): Promise<(Row<T> & { key: string }) | null>;
 }
 
 export function digest(token: string) { return createHash('sha256').update(token).digest('hex'); }
@@ -43,9 +44,9 @@ export function localStore(directory?: string): Store {
       writes = operation.catch(() => {});
       return operation;
     },
-    async widget<T>(hash: string) {
-      const row = await get<T & { widgetHash?: string }>('local');
-      return row?.data.widgetHash === hash ? row.data : null;
+    async findRoom<T>(field: WidgetHashField, hash: string) {
+      const row = await get<T & Partial<Record<WidgetHashField, string>>>('local');
+      return row?.data[field] === hash ? { key: 'local', ...row } : null;
     },
   };
 }
@@ -82,11 +83,11 @@ export function supabaseStore(cloud: Cloud): Store {
         });
       return rows.length === 1;
     },
-    async widget<T>(hash: string) {
-      const rows: { data: T }[] = await request(new URLSearchParams({
-        'data->>widgetHash': 'eq.' + hash, select: 'data', limit: '1',
+    async findRoom<T>(field: WidgetHashField, hash: string) {
+      const rows: (Row<T> & { key: string })[] = await request(new URLSearchParams({
+        ['data->>' + field]: 'eq.' + hash, select: 'key,revision,data', limit: '1',
       }));
-      return rows[0]?.data ?? null;
+      return rows[0] ?? null;
     },
   };
 }

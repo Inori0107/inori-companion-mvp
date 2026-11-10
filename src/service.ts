@@ -7,12 +7,13 @@ import {
 } from './domain.js';
 import { cases, heldOut, testState, trialCheck, validatedPersona, type Studio, type Trial } from './evaluations.js';
 import { promptFor, type Provider } from './provider.js';
-import { change, digest, newToken, type Store } from './storage.js';
+import { change, digest, newToken, type Row, type Store } from './storage.js';
 import { exported, importBackup } from './backup.js';
 import { defaultDesign, designedPersona, designFormat, designTemplate, designVersion, validateDesign } from './design.js';
-import { portraitImage, portraitInfo, roomScene, savePortraits } from './portraits.js';
+import { portraitInfo, roomScene, savePortraits, validatePortraitImage } from './portraits.js';
 
 const newStudio = (): Studio => ({ active: initialPersona.config.version, personas: [initialPersona], runs: [] });
+const pairingLifetime = 5 * 60_000;
 
 function view(data: AppData, now: Date, revision: number) {
   const current = currentState(data, now);
@@ -27,7 +28,8 @@ function view(data: AppData, now: Date, revision: number) {
     expression: scene.expression, stage: stage(current, data.memories.filter(m => m.type === 'shared').length),
     today, context: data.context, todayCount: data.events.filter(event => event.date === today).length,
     messages: data.messages.slice(-180), events: data.events.slice(-80),
-    memories: data.memories, feedbackIds: data.feedback.map(row => row.messageId), widgetEnabled: !!data.widgetHash, widgetDetails: data.widgetDetails === true,
+    memories: data.memories, feedbackIds: data.feedback.map(row => row.messageId),
+    nativeWidgetEnabled: !!data.nativeWidgetHash, nativePairPending: !!data.nativePairHash && (data.nativePairUntil ?? 0) > now.getTime(),
   };
 }
 
@@ -71,8 +73,11 @@ export class Service {
   }
 
   async update(key: string, body: Record<string, unknown>) {
-    if (body.action === 'interaction') return this.interact(key, body);
-    let widgetToken: string | undefined;
+    if (body.action === 'interaction') {
+      const { data, revision } = await this.interact(key, body);
+      return view(data, this.now(), revision);
+    }
+    let nativePairCode: string | undefined;
     const { data, revision } = await this.mutate(key, (data, now) => {
       switch (body.action) {
         case 'settings': {
@@ -123,10 +128,15 @@ export class Service {
           data.feedback = [...data.feedback.filter(row => row.messageId !== id), rating];
           break;
         }
-        case 'widget':
-          widgetToken = body.enabled === true ? newToken() : undefined;
-          data.widgetHash = widgetToken ? digest(widgetToken) : null;
-          data.widgetDetails = !!widgetToken && body.details === true;
+        case 'nativePair':
+          nativePairCode = newToken();
+          data.nativePairHash = digest(nativePairCode);
+          data.nativePairUntil = now.getTime() + pairingLifetime;
+          break;
+        case 'revokeNativeWidget':
+          data.nativeWidgetHash = null;
+          data.nativePairHash = null;
+          data.nativePairUntil = 0;
           break;
         case 'import':
           if (body.consent !== true) throw new Problem(400, '請先同意啟用備份中的記憶。');
@@ -143,7 +153,7 @@ export class Service {
         default: throw new Problem(400, '未知的操作。');
       }
     });
-    return { ...view(data, this.now(), revision), widgetToken };
+    return { ...view(data, this.now(), revision), nativePairCode };
   }
 
   async studio() { return (await this.store.get<Studio>('persona'))?.data ?? newStudio(); }
@@ -174,8 +184,9 @@ export class Service {
     })).data;
   }
 
-  private async reserve<T>(key: string, id: string, prepare: (data: AppData, now: Date) => T) {
+  private async reserve<T>(key: string, id: string, prepare: (data: AppData, now: Date) => T, nativeHash?: string) {
     return (await this.mutate(key, (data, now) => {
+      checkNativeWidget(data, nativeHash);
       const prior = data.receipts.find(row => row.id === id);
       if (prior) return { prior };
       if (data.pending && data.pending.until > now.getTime()) throw new Problem(409, '已有生成請求，請稍候。');
@@ -194,12 +205,12 @@ export class Service {
     await this.mutate(key, data => { if (data.pending?.id === id) data.pending = null; });
   }
 
-  private async interact(key: string, body: Record<string, unknown>) {
+  private async interact(key: string, body: Record<string, unknown>, nativeHash?: string) {
     const id = uuid(body.id);
     const action = roomActions.find(action => action === body.type);
     if (!action) throw new Problem(400, '請選擇摸頭、牽手、擁抱或唱歌。');
     const provider = this.provider();
-    if (provider.model === 'mock') return this.finishInteraction(key, id, action);
+    if (provider.model === 'mock') return this.finishInteraction(key, id, action, undefined, nativeHash);
 
     const studio = await this.studio();
     const baseline = studio.personas.find(p => p.config.version === studio.active)!;
@@ -225,14 +236,16 @@ export class Service {
       return { prompt, context: data.context };
     };
     let reserved;
-    try { reserved = await this.reserve(key, id, prepare); }
+    try { reserved = await this.reserve(key, id, prepare, nativeHash); }
     catch (error) {
-      if (error instanceof Problem && error.status === 429) return this.finishInteraction(key, id, action);
+      if (error instanceof Problem && error.status === 429) return this.finishInteraction(key, id, action, undefined, nativeHash);
       throw error;
     }
     if (reserved.prior) {
       if (reserved.prior.kind !== 'interaction') throw new Problem(409, '請求識別碼已使用。');
-      return this.session(key);
+      const room = await this.readRoom(key);
+      checkNativeWidget(room.data, nativeHash);
+      return room;
     }
 
     const prepared = reserved.prepared!;
@@ -240,15 +253,16 @@ export class Service {
       let reaction;
       try { reaction = parseReaction(await provider.generate(prepared.prompt)); }
       catch { /* A safe built-in reaction is available if generation or validation fails. */ }
-      return await this.finishInteraction(key, id, action, { reaction, context: prepared.context });
+      return await this.finishInteraction(key, id, action, { reaction, context: prepared.context }, nativeHash);
     } catch (error) {
       await this.release(key, id).catch(() => {});
       throw error;
     }
   }
 
-  private async finishInteraction(key: string, id: string, action: RoomAction, generation?: { context: number; reaction?: InteractionReaction }) {
-    const { data, revision } = await this.mutate(key, (data, now) => {
+  private async finishInteraction(key: string, id: string, action: RoomAction, generation?: { context: number; reaction?: InteractionReaction }, nativeHash?: string) {
+    return this.mutate(key, (data, now) => {
+      checkNativeWidget(data, nativeHash);
       const prior = data.receipts.find(row => row.id === id);
       if (prior) {
         if (prior.kind !== 'interaction') throw new Problem(409, '請求識別碼已使用。');
@@ -269,7 +283,6 @@ export class Service {
       if (generation) data.pending = null;
       record(data, { id, kind: 'interaction', targetId: event.id });
     });
-    return view(data, this.now(), revision);
   }
 
   async chat(key: string, body: Record<string, unknown>, delta?: (s: string) => void) {
@@ -412,26 +425,47 @@ export class Service {
     } finally { await this.release(key, id).catch(() => {}); }
   }
 
-  async widget(token: string) {
-    const data = await this.store.widget<AppData>(digest(token));
-    if (!data) throw new Problem(401, '小工具憑證無效。');
+  async pairWidget(code: string) {
+    const hash = digest(code);
+    const room = await this.store.findRoom<AppData>('nativePairHash', hash);
+    if (!room) throw new Problem(401, '配對碼已失效。請在網頁重新產生。');
+    const token = newToken();
+    await this.mutate(room.key, (data, now) => {
+      if (data.nativePairHash !== hash || (data.nativePairUntil ?? 0) <= now.getTime()) {
+        throw new Problem(401, '配對碼已失效。請在網頁重新產生。');
+      }
+      data.nativePairHash = null;
+      data.nativePairUntil = 0;
+      data.nativeWidgetHash = digest(token);
+    });
+    return { token };
+  }
+
+  async nativeWidget(token: string, action?: Record<string, unknown>) {
+    const hash = digest(token);
+    const room = await this.store.findRoom<AppData>('nativeWidgetHash', hash);
+    if (!room) throw new Problem(401, '小工具憑證無效。請重新配對。');
+    return this.nativeWidgetView(action ? await this.interact(room.key, action, hash) : room);
+  }
+
+  private nativeWidgetView({ data, revision }: Row<AppData>) {
     const now = this.now();
     const today = dateAt(now, data.zone);
     const hour = Number(new Intl.DateTimeFormat('en', { timeZone: data.zone, hour: '2-digit', hourCycle: 'h23' }).format(now));
-    const days = Math.max(1, Math.round((Date.parse(today) - Date.parse(data.meetDate)) / 86_400_000) + 1);
-    const anniversary = days > 1 && today.slice(5) === data.meetDate.slice(5);
+    const anniversary = today > data.meetDate && today.slice(5) === data.meetDate.slice(5);
     const greeting = anniversary ? '今天是我們的相遇紀念日。' : hour < 6 ? '夜深了。早點休息吧。'
       : hour < 12 ? '早安。睡得還好嗎？' : hour < 18 ? '午安。記得休息一下。' : '晚安。今天辛苦了。';
     const scene = roomScene(data, expression(currentState(data, now)));
-    const summary = { name: (data.design ?? defaultDesign).name,
-      greeting: anniversary ? greeting : data.design?.greeting || greeting,
-      days, anniversary, mood: scene.expression };
-    if (!data.widgetDetails) return summary;
     const recent = data.events.findLast(event => !event.legacy);
-    return { ...summary, scene: {
+    return {
+      revision,
+      name: (data.design ?? defaultDesign).name,
+      greeting: anniversary ? greeting : data.design?.greeting || greeting,
+      mood: scene.expression,
+      todayCount: data.events.filter(event => event.date === today).length,
       portrait: scene.portrait?.image ?? null,
-      interaction: recent ? actionLabels[recent.type] : null,
-    } };
+      interaction: recent ? { label: actionLabels[recent.type], reply: recent.reply, source: recent.reactionSource ?? null } : null,
+    };
   }
 
   async portrait(key: string, id: unknown) {
@@ -439,7 +473,8 @@ export class Service {
     const row = await this.store.get<AppData>(key);
     const item = row?.data.portraits?.find(portrait => portrait.id === target);
     if (!item) throw new Problem(404, '找不到這張立繪。');
-    return portraitImage(item.image);
+    validatePortraitImage(item.image);
+    return item.image;
   }
 
   async shareDesign(key: string) {
@@ -453,6 +488,10 @@ export class Service {
   }
 
   async export(key: string) { return exported(await this.read(key)); }
+}
+
+function checkNativeWidget(data: AppData, hash?: string) {
+  if (hash && data.nativeWidgetHash !== hash) throw new Problem(401, '小工具憑證無效。請重新配對。');
 }
 
 function record(data: AppData, receipt: AppData['receipts'][number]) {

@@ -18,7 +18,7 @@ export function portraitInfo({ id, name, kind, value }: Portrait): PortraitInfo 
   return { id, name, kind, value };
 }
 
-export function portraitImage(value: unknown) {
+export function validatePortraitImage(value: unknown): asserts value is string {
   if (typeof value !== 'string' || value.length > Math.ceil(imageLimit / 3) * 4 + 30) {
     throw new Problem(400, '每張立繪壓縮後須小於 100 KB。');
   }
@@ -30,7 +30,6 @@ export function portraitImage(value: unknown) {
     : format === 'jpeg' ? bytes.subarray(0, 3).equals(Buffer.from([255, 216, 255]))
       : bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP';
   if (!valid || bytes.length > imageLimit || bytes.toString('base64') !== encoded) throw new Problem(400, '立繪檔案不正確或超過大小限制。');
-  return { mime: 'image/' + format, bytes };
 }
 
 function normalized(value: string) { return value.normalize('NFKC').toLowerCase(); }
@@ -55,8 +54,8 @@ export function savePortraits(raw: unknown, existing: Portrait[]) {
     if (row.id && (!old || ids.has(old.id))) throw new Problem(400, '找不到這張立繪，請重新開啟表單。');
     if (old) ids.add(old.id);
     if (row.image !== undefined) {
-      portraitImage(row.image);
-      return { id: randomUUID(), name, kind, value, image: row.image as string };
+      validatePortraitImage(row.image);
+      return { id: randomUUID(), name, kind, value, image: row.image };
     }
     if (!old) throw new Problem(400, '請為每張新增立繪選擇圖片。');
     return { id: old.id, name, kind, value, image: old.image };

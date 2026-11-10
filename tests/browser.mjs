@@ -61,6 +61,9 @@ try {
   await page.getByText('目前沒有已保存的記憶。').waitFor();
   await page.locator('[data-tab="touch"]').click();
   assert.deepEqual(await page.locator('[data-touch] span').allTextContents(), ['摸頭', '牽手', '擁抱', '唱歌']);
+  for (const action of ['摸頭', '牽手', '擁抱', '唱歌']) {
+    await page.getByRole('button', { name: action, exact: true }).locator('svg[aria-hidden="true"]').waitFor();
+  }
   await page.getByRole('button', { name: '唱歌' }).click();
   await page.locator('#saveShared').click();
   await page.locator('#memoryConsent').check();
@@ -151,19 +154,23 @@ try {
 
   await page.getByRole('button', { name: '設定', exact: true }).click();
   await page.getByText('主畫面小工具', { exact: true }).click();
-  await page.getByRole('button', { name: '產生 Widget 憑證' }).click();
-  await page.locator('#widgetLabel').waitFor();
-  const token = await page.locator('#widgetToken').inputValue();
-  assert.equal(token.length, 43);
-  const widget = await context.request.get(url + '/api/widget', { headers: { Authorization: 'Bearer ' + token } });
-  assert.equal(widget.status(), 200);
-  const widgetData = await widget.json();
-  assert.equal(widgetData.name, '霧島');
-  assert.match(widgetData.scene.portrait, /^data:image\/png/);
-  assert.equal(widgetData.scene.interaction, '摸頭');
-  await page.getByRole('button', { name: '撤銷 Widget 憑證' }).click();
-  await page.getByText('憑證已撤銷。', { exact: true }).waitFor();
-  assert.equal((await context.request.get(url + '/api/widget', { headers: { Authorization: 'Bearer ' + token } })).status(), 401);
+  await page.getByRole('button', { name: '產生 iPhone 配對碼' }).click();
+  await page.locator('#nativePairLabel').waitFor();
+  const pairing = new URL(await page.locator('#nativePairCode').inputValue());
+  assert.equal(pairing.origin, url);
+  assert.match(pairing.hash, /^#pair=[A-Za-z0-9_-]{43}$/);
+  const linked = await context.request.post(url + '/api/widget-pair', { data: { code: pairing.hash.slice(6) } });
+  assert.equal(linked.status(), 200);
+  const nativeToken = (await linked.json()).token;
+  const native = await context.request.get(url + '/api/widget-native', { headers: { Authorization: 'Bearer ' + nativeToken } });
+  assert.equal(native.status(), 200);
+  const widget = await native.json();
+  assert.equal(widget.name, '霧島');
+  assert.match(widget.portrait, /^data:image\/png/);
+  assert.equal(widget.interaction.label, '摸頭');
+  await page.getByRole('button', { name: '撤銷 iPhone 配對' }).click();
+  await page.locator('#nativePairLabel').waitFor({ state: 'hidden' });
+  assert.equal((await context.request.get(url + '/api/widget-native', { headers: { Authorization: 'Bearer ' + nativeToken } })).status(), 401);
   if (!(await page.locator('#exportBtn').isVisible())) await page.getByText('資料與分享', { exact: true }).click();
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: '匯出私人備份' }).click();
@@ -184,9 +191,10 @@ try {
   await page.locator('#compare').getByRole('button', { name: '人工評分' }).click();
   await page.getByRole('button', { name: '保存評分' }).click();
   await page.locator('#results').getByText(/5 \/ 5/).waitFor();
-  await page.goto(url + '/#interact');
+  await page.goto(url + '/');
   await page.locator('#room').waitFor();
   await page.getByRole('heading', { name: '霧島' }).waitFor();
+  await page.locator('[data-tab="touch"]').click();
   await page.locator('#panel-touch').waitFor();
   await page.setViewportSize({ width: 320, height: 568 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

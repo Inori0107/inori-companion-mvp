@@ -18,20 +18,16 @@ function call(handler, url, body, headers = {}) {
     setHeader(key, value) { result.headers[key] = value; },
     writeHead(status, headers) { result.status = status; Object.assign(result.headers, headers); },
     write(chunk) { result.frames += chunk; },
-    end(chunk = '') {
-      if (Buffer.isBuffer(chunk)) result.image = chunk;
-      else result.frames += chunk;
-    },
+    end(chunk = '') { result.frames += chunk; },
   };
   return handler(req, res).then(() => {
-    if (result.image) return result;
     const json = result.headers['Content-Type']?.includes('ndjson')
       ? result.frames.trim().split('\n').map(line => JSON.parse(line)) : JSON.parse(result.frames);
     return { ...result, json };
   });
 }
 
-test('Mock HTTP 路徑支援串流、再生成、備份與最小權限 Widget', async () => {
+test('Mock HTTP 路徑支援串流、再生成與舊版備份還原', async () => {
   let now = new Date('2026-11-09T06:00:00Z');
   const handler = apiHandler({ env: {}, store: localStore(), now: () => now });
   const health = (await call(handler, '/api/health')).json;
@@ -46,30 +42,9 @@ test('Mock HTTP 路徑支援串流、再生成、備份與最小權限 Widget', 
   const regenerated = await call(handler, '/api/chat', { id: randomUUID(), regenerate: original.id });
   assert.equal(regenerated.json.messages.length, 3);
   assert.notEqual(regenerated.json.messages.at(-1).id, original.id);
-  const widget = await call(handler, '/api/state', { action: 'widget', enabled: true });
-  const authorization = 'Bearer ' + widget.json.widgetToken;
-  const read = await call(handler, '/api/widget', undefined, { authorization });
-  assert.deepEqual(Object.keys(read.json).sort(), ['anniversary', 'days', 'greeting', 'mood', 'name']);
-  const source = await readFile(new URL('../public/icon-192.png', import.meta.url));
-  const image = 'data:image/png;base64,' + source.toString('base64');
-  const saved = await call(handler, '/api/state', {
-    action: 'design', expectedVersion: widget.json.designVersion, design: widget.json.design,
-    portraits: [{ name: '日常', kind: 'expression', value: '普通', image }],
-  });
-  assert.equal(saved.status, 200);
-  await call(handler, '/api/state', { action: 'interaction', id: randomUUID(), type: 'head' });
-  assert.equal((await call(handler, '/api/widget', undefined, { authorization })).json.scene, undefined);
-  const richWidget = await call(handler, '/api/state', { action: 'widget', enabled: true, details: true });
-  const richAuth = { authorization: 'Bearer ' + richWidget.json.widgetToken };
-  assert.equal((await call(handler, '/api/widget', undefined, { authorization })).status, 401);
-  const scene = await call(handler, '/api/widget', undefined, richAuth);
-  assert.deepEqual(scene.json.scene, { interaction: '摸頭', portrait: image });
   const backup = await call(handler, '/api/export');
-  assert.equal(backup.json.widgetHash, undefined);
-  assert.equal(backup.json.widgetDetails, undefined);
   assert.equal(backup.json.messages.length, 3);
   await call(handler, '/api/state', { action: 'reset' });
-  assert.equal((await call(handler, '/api/widget', undefined, richAuth)).status, 401);
   const restored = await call(handler, '/api/state', {
     action: 'import', consent: true, backup: { nickname: '澄', meetDate: '2026-10-01',
       messages: [{ role: 'user', content: '舊紀錄' }], memories: ['我喜歡合唱'], interactions: { '2026-10-02': ['sing'] } },
@@ -78,6 +53,62 @@ test('Mock HTTP 路徑支援串流、再生成、備份與最小權限 Widget', 
   assert.equal(restored.json.memories[0].source, 'backup-v1');
   assert.equal(restored.json.events[0].legacy, true);
   assert.equal(restored.json.messages[0].content, '舊紀錄');
+});
+
+test('iPhone 配對限時單次使用，互動使用 AI、保留紀錄並支援安全重試', async () => {
+  let now = new Date('2026-11-09T06:00:00Z');
+  let onGenerate;
+  const handler = apiHandler({ env: { OPENAI_API_KEY: 'fixture' }, store: localStore(), now: () => now,
+    provider: () => ({ model: 'test', async generate() {
+      await onGenerate?.();
+      return JSON.stringify({ accepted: true, expression: '微笑', reply: '嗯，這樣就好。' });
+    } }),
+  });
+  const issue = () => call(handler, '/api/state', { action: 'nativePair' });
+  const pair = code => call(handler, '/api/widget-pair', { code }, { origin: undefined });
+  const auth = token => ({ origin: undefined, authorization: 'Bearer ' + token });
+  const expired = await issue();
+  now = new Date(now.getTime() + 5 * 60_000);
+  assert.equal((await pair(expired.json.nativePairCode)).status, 401);
+  const issued = await issue();
+  assert.equal(issued.json.nativePairPending, true);
+  const attempts = await Promise.all([pair(issued.json.nativePairCode), pair(issued.json.nativePairCode)]);
+  assert.deepEqual(attempts.map(result => result.status).sort(), [200, 401]);
+  const native = auth(attempts.find(result => result.status === 200).json.token);
+  const room = (await call(handler, '/api/session')).json;
+  assert.equal((await call(handler, '/api/widget', undefined, native)).status, 404);
+  assert.equal((await call(handler, '/api/state', { action: 'reset' }, native)).status, 403);
+  assert.equal((await call(handler, '/api/widget-native', { id: randomUUID(), type: 'reset' }, native)).status, 400);
+
+  const png = await readFile(new URL('../public/icon-192.png', import.meta.url));
+  const portrait = 'data:image/png;base64,' + png.toString('base64');
+  await call(handler, '/api/state', { action: 'design', design: room.design,
+    expectedVersion: room.designVersion, portraits: [{ name: '微笑', kind: 'expression', value: '微笑', image: portrait }],
+  });
+  const action = { id: randomUUID(), type: 'head' };
+  const result = await call(handler, '/api/widget-native', action, native);
+  assert.equal(result.status, 200);
+  assert.equal(result.json.todayCount, 1);
+  assert.equal(result.json.portrait, portrait);
+  assert.deepEqual(result.json.interaction, { label: '摸頭', reply: '嗯，這樣就好。', source: 'ai' });
+  assert.equal(result.json.events, undefined);
+  assert.equal(result.json.messages, undefined);
+  assert.equal((await call(handler, '/api/widget-native', action, native)).json.todayCount, 1);
+  assert.equal((await call(handler, '/api/session')).json.events.length, 1);
+  const backup = (await call(handler, '/api/export')).json;
+  assert.equal(backup.nativeWidgetHash, undefined);
+  assert.equal(backup.nativePairHash, undefined);
+
+  now = new Date(now.getTime() + 1000);
+  onGenerate = () => call(handler, '/api/state', { action: 'revokeNativeWidget' });
+  assert.equal((await call(handler, '/api/widget-native', { id: randomUUID(), type: 'head' }, native)).status, 401);
+  assert.equal((await call(handler, '/api/session')).json.events.length, 1);
+  assert.equal((await call(handler, '/api/widget-native', undefined, native)).status, 401);
+
+  const replacement = await issue();
+  const paired = await pair(replacement.json.nativePairCode);
+  await call(handler, '/api/state', { action: 'reset' });
+  assert.equal((await call(handler, '/api/widget-native', undefined, auth(paired.json.token))).status, 401);
 });
 
 test('Supabase Auth / PostgREST 模擬整合，隔離帳號、重新登入、保護校調資料', async context => {
@@ -119,6 +150,11 @@ test('Supabase Auth / PostgREST 模擬整合，隔離帳號、重新登入、保
       rows.set(key, { ...row, ...body });
       return Response.json([{ revision: body.revision }]);
     }
+    const lookup = [...url.searchParams].find(([name]) => name.startsWith('data->>'));
+    if (lookup) {
+      const [field, filter] = lookup;
+      return Response.json([...rows.values()].filter(row => row.data[field.slice(7)] === filter.slice(3)).slice(0, 1));
+    }
     return Response.json(row ? [row] : []);
   });
 
@@ -143,6 +179,15 @@ test('Supabase Auth / PostgREST 模擬整合，隔離帳號、重新登入、保
   const otherUser = await call(handler, '/api/session', undefined, auth(reader));
   assert.deepEqual(otherUser.json.memories, []);
   assert.equal(otherUser.json.design.name, '楪祈');
+  const issued = await call(handler, '/api/state', { action: 'nativePair' }, auth(reader));
+  const linked = await call(handler, '/api/widget-pair', { code: issued.json.nativePairCode }, { origin: undefined });
+  assert.equal(linked.status, 200);
+  const widgetAction = await call(handler, '/api/widget-native', { id: randomUUID(), type: 'head' },
+    { origin: undefined, authorization: 'Bearer ' + linked.json.token });
+  assert.equal(widgetAction.status, 200);
+  assert.equal(widgetAction.json.todayCount, 1);
+  assert.equal((await call(handler, '/api/session', undefined, auth(admin))).json.events.length, 0);
+  assert.equal((await call(handler, '/api/session', undefined, auth(reader))).json.events.length, 1);
   const draft = { base: 'original', name: '練習角色', greeting: '歡迎來到書房。' };
   const save = await call(handler, '/api/state', {
     action: 'design', expectedVersion: otherUser.json.designVersion, design: draft,
@@ -156,19 +201,12 @@ test('Supabase Auth / PostgREST 模擬整合，隔離帳號、重新登入、保
   }, auth(reader));
   assert.equal(uploaded.status, 200);
   assert.equal(uploaded.json.context, save.json.context);
-  const path = '/api/portraits/' + uploaded.json.portraits[0].id;
-  const response = await call(handler, path, undefined, auth(reader));
-  assert.equal(response.headers['Content-Type'], 'image/png');
-  assert.equal(response.headers['Cache-Control'], 'no-store');
-  assert.deepEqual(response.image, png);
   const imageURL = '/api/portrait?id=' + uploaded.json.portraits[0].id;
   const appImage = await call(handler, imageURL, undefined, auth(reader));
   assert.equal(appImage.headers['Cache-Control'], 'no-store');
   assert.equal(appImage.json.image, 'data:image/png;base64,' + png.toString('base64'));
   assert.equal((await call(handler, imageURL, undefined, auth(admin))).status, 404);
   assert.equal((await call(handler, imageURL)).status, 401);
-  assert.equal((await call(handler, path, undefined, auth(admin))).status, 404);
-  assert.equal((await call(handler, path)).status, 401);
   assert.equal((await call(handler, '/api/state', { action: 'reset' }, {
     ...auth(admin), 'x-inori-account': otherUser.json.accountId,
   })).status, 401);

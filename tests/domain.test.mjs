@@ -180,7 +180,7 @@ test('同日匯入的舊互動不會佔用新的共同互動', () => {
 
 test('角色範本只輸出公開欄位，私人備份可還原角色設計', async () => {
   const store = localStore();
-  const oldRoom = fresh(date);
+  const oldRoom = { ...fresh(date), widgetHash: 'retired-credential-hash', widgetDetails: true };
   delete oldRoom.design;
   await store.put('local', null, oldRoom);
   const service = new Service(store, () => makeProvider(), 12, [], () => date);
@@ -189,7 +189,7 @@ test('角色範本只輸出公開欄位，私人備份可還原角色設計', as
   const design = { base: 'original', name: '測試角色', greeting: '你好。', widgetToken: '不應匯出的憑證' };
   await service.update('local', { action: 'design', expectedVersion: before.designVersion, design });
   await service.update('local', mem('不應匯出的記憶'));
-  await service.update('local', { action: 'widget', enabled: true });
+  await service.update('local', { action: 'nativePair' });
   const template = await service.shareDesign('local');
   assert.deepEqual(Object.keys(template), ['format', 'design']);
   assert.deepEqual(Object.keys(template.design).sort(), ['base', 'greeting', 'name', 'personality', 'voice', 'world']);
@@ -198,10 +198,12 @@ test('角色範本只輸出公開欄位，私人備份可還原角色設計', as
   assert.throws(() => service.previewDesign({ format: 'inori-companion-v2' }), /角色範本/);
   const backup = await service.export('local');
   assert.equal(backup.widgetHash, undefined);
+  assert.equal(backup.widgetDetails, undefined);
+  assert.equal(backup.nativePairHash, undefined);
   const restored = await service.update('other', { action: 'import', consent: true, backup });
   assert.equal(restored.design.name, template.design.name);
   assert.equal(restored.memories[0].content, '不應匯出的記憶');
-  assert.equal(restored.widgetEnabled, false);
+  assert.equal(restored.nativeWidgetEnabled, false);
 });
 
 test('角色與多張立繪原子儲存，舊關鍵字保留，只有接受的動作可切圖', async () => {
@@ -249,7 +251,7 @@ test('角色與多張立繪原子儲存，舊關鍵字保留，只有接受的�
   const restored = await service.update('other', { action: 'import', consent: true, backup });
   assert.equal(restored.portraits[0].name, '基本');
   assert.notEqual(restored.portraits[0].id, base.id);
-  assert.equal((await service.portrait('other', restored.portraits[0].id)).mime, 'image/png');
+  assert.equal(await service.portrait('other', restored.portraits[0].id), image);
 });
 
 test('AI 互動讀取關係及角色，依界線切換立繪，重試及無效回覆安全回退', async () => {

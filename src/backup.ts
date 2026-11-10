@@ -7,8 +7,14 @@ import { validateDesign } from './design.js';
 import { savePortraits } from './portraits.js';
 
 export function exported(data: AppData) {
-  const { widgetHash, widgetDetails, pending, usage, receipts, ...profile } = data;
-  return { format: 'inori-companion-v2', ...profile };
+  const {
+    design, portraits, lastActivity, nickname, meetDate, zone, state, stateDate, context,
+    memories, memoryEvents, messages, events, feedback, journals,
+  } = data;
+  return {
+    format: 'inori-companion-v2', design, portraits, lastActivity, nickname, meetDate, zone, state, stateDate, context,
+    memories, memoryEvents, messages, events, feedback, journals,
+  };
 }
 
 export function importBackup(data: AppData, value: unknown, now: Date) {
