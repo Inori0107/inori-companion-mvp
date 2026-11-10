@@ -63,24 +63,23 @@ export function savePortraits(raw: unknown, existing: Portrait[]) {
   });
 }
 
-export function activePortrait(data: AppData, expression: string) {
-  const portraits = data.portraits ?? [];
-  const interaction = data.events.findLast(event => !event.legacy);
+function latestInteraction(data: AppData) {
+  if (data.lastActivity === 'chat') return undefined;
+  const event = data.events.findLast(item => !item.legacy);
+  if (data.lastActivity === 'interaction' || !event) return event;
   const reply = data.messages.at(-1);
-  const user = data.messages.at(-2);
-  const hasTurn = reply?.role === 'assistant' && reply.meta && reply.context === data.context && reply.turnId &&
-    user?.role === 'user' && user.turnId === reply.turnId;
-  const interactionIsLatest = interaction && (data.lastActivity === 'interaction' ||
-    (!data.lastActivity && (!reply?.meta || (reply.at ?? '') < interaction.at)));
-  if (interactionIsLatest) {
-    const action = portraits.find(p => p.kind === 'interaction' && p.value === interaction.type);
-    if (action) return action.id;
-  } else if (hasTurn) {
-    const lines = [normalized(user.content), normalized(reply.content)];
-    const keyword = portraits.filter(p => p.kind === 'keyword' && lines.some(line => line.includes(normalized(p.value))))
-      .sort((a, b) => b.value.length - a.value.length)[0];
-    if (keyword) return keyword.id;
+  return !reply?.meta || (reply.at ?? '') < event.at ? event : undefined;
+}
+
+export function roomScene(data: AppData, fallback: string) {
+  const portraits = data.portraits ?? [];
+  const event = latestInteraction(data);
+  const expression = event?.expression ?? fallback;
+  if (event?.accepted === true) {
+    const action = portraits.find(p => p.kind === 'interaction' && p.value === event.type);
+    if (action) return { expression, portrait: action };
   }
-  return (portraits.find(p => p.kind === 'expression' && p.value === expression)
-    ?? portraits.find(p => p.kind === 'expression' && p.value === '普通'))?.id ?? null;
+  const portrait = portraits.find(p => p.kind === 'expression' && p.value === expression)
+    ?? portraits.find(p => p.kind === 'expression' && p.value === '普通');
+  return { expression, portrait };
 }

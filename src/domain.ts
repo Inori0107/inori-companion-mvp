@@ -57,22 +57,22 @@ export const initialState = { trust: 10, familiarity: 8, mood: 0, energy: 70, co
 export type CharacterState = typeof initialState;
 export const actions = ['hello', 'head', 'hand', 'hug', 'sing', 'listen', 'feeling'] as const;
 export type InteractionType = typeof actions[number];
-export const feelings = ['good', 'tired', 'down'] as const;
-type Feeling = typeof feelings[number];
+export const roomActions = ['head', 'hand', 'hug', 'sing'] as const;
+export type RoomAction = typeof roomActions[number];
 const tiredBelow = 48;
-const feelingReply: Record<Feeling, { reply: string; mood: number }> = {
-  good: { reply: '聽你這麼說，我也有點開心。', mood: 5 },
-  tired: { reply: '辛苦了。要不要先歇一會兒？', mood: -2 },
-  down: { reply: '嗯。我可以陪你安靜一會兒。', mood: -8 },
-};
 export const actionLabels = {
   hello: '打招呼', head: '摸頭', hand: '牽手', hug: '擁抱',
-  sing: '一起唱歌', listen: '聽歌', feeling: '分享心情',
+  sing: '唱歌', listen: '聽歌', feeling: '分享心情',
+};
+export const reactionExpressions = ['普通', '微笑', '害羞', '難過'] as const;
+export type InteractionReaction = {
+  accepted: boolean; expression: typeof reactionExpressions[number]; reply: string;
 };
 
 export type Interaction = {
   id: string; date: string; at: string; type: InteractionType; reply: string;
-  before: CharacterState | null; after: CharacterState | null; meaningful: boolean; legacy?: boolean; feeling?: Feeling;
+  before: CharacterState | null; after: CharacterState | null; meaningful: boolean; legacy?: boolean;
+  accepted?: boolean; expression?: string; reactionSource?: 'ai' | 'built-in';
 };
 export function stage(state: CharacterState, sharedCount: number) {
   if (state.trust >= 70 && state.comfort >= 65 && sharedCount >= 5) return '深厚陪伴';
@@ -90,39 +90,40 @@ export function expression(state: CharacterState) {
   return state.familiarity < 20 ? '普通' : '平靜';
 }
 
-export function interaction(type: InteractionType, before: CharacterState, recent: Interaction[], at: Date, zone: string, feeling?: Feeling): Interaction {
-  const physical = type === 'head' || type === 'hand' || type === 'hug';
-  const welcome = !physical || (before.comfort >= (type === 'hug' ? 38 : 27) && before.energy >= 30);
+const comfortNeeded: Record<RoomAction, number> = { head: 16, hand: 27, hug: 38, sing: 0 };
+
+export function canAcceptInteraction(type: RoomAction, state: CharacterState) {
+  return state.comfort >= comfortNeeded[type] && state.energy >= (type === 'sing' ? tiredBelow : 30);
+}
+
+export function interaction(type: RoomAction, before: CharacterState, recent: Interaction[], at: Date, zone: string, reaction?: InteractionReaction): Interaction {
+  const allowed = canAcceptInteraction(type, before);
+  // A proposed acceptance outside the room's limits cannot set the reply or the picture.
+  const response = reaction?.accepted && !allowed ? undefined : reaction;
+  const accepted = allowed && (response?.accepted ?? true);
   const date = dateAt(at, zone);
-  const todayEvents = recent.filter(event => event.date === date && !event.legacy);
-  const repeated = todayEvents.some(event => event.type === type);
-  const meaningful = !repeated && (type === 'feeling' || type === 'listen' || type === 'sing') && before.energy >= 30;
-  const tired = before.energy < tiredBelow;
-  const reaction = type === 'feeling' && feeling ? feelingReply[feeling] : undefined;
-  const lines: Record<InteractionType, string> = {
-    hello: before.familiarity < 20 ? '你好。……今天過得怎麼樣？' : '你來了。今天想聊點什麼？',
+  const repeated = recent.some(event => event.date === date && !event.legacy && event.type === type && event.accepted !== false);
+  const meaningful = accepted && !repeated;
+  const lines: Record<RoomAction, string> = {
     head: '嗯……輕一點就好。',
     hand: '嗯。慢慢來就好。',
     hug: '可以。就安靜地待一會兒。',
-    sing: tired ? '今天有點累。可以先聽一會兒嗎？' : '從你熟悉的旋律開始吧。',
-    listen: '好。這首歌，有哪一段你特別喜歡？',
-    feeling: reaction?.reply ?? '嗯。你想說多少都可以。',
+    sing: '從你熟悉的旋律開始吧。',
   };
-  const reply = !welcome ? '我想先保持一點距離。坐在這裡聊聊，可以嗎？'
-    : type === 'hand' && todayEvents.filter(event => event.type === 'hand').length === 2
-      ? '第三次了。……我有留意。'
-      : type === 'hug' && todayEvents.at(-1)?.type === 'head'
-        ? '剛剛才摸了頭。……這次可以。'
-        : before.mood <= -18 && type === 'hello' ? '你好。今天想安靜一點，可以嗎？' : lines[type];
+  const refusal = type === 'sing' ? '今天有點累。等我休息一下，再一起唱吧。'
+    : '我想先保持一點距離。坐在這裡聊聊，可以嗎？';
   const clamp = (value: number, min = 0) => Math.max(min, Math.min(100, value));
   const after = {
-    trust: clamp(before.trust + (meaningful ? 3 : welcome && !physical && !repeated ? 1 : 0)),
-    familiarity: clamp(before.familiarity + (welcome && !repeated ? 2 : 0)),
-    mood: clamp(before.mood + (!repeated ? reaction?.mood ?? (welcome ? meaningful ? 4 : 2 : -3) : 0), -100),
-    energy: clamp(before.energy + (tired && !physical ? 5 : !repeated && welcome ? type === 'sing' ? -8 : -3 : 0)),
-    comfort: clamp(before.comfort + (welcome ? repeated ? 0 : meaningful ? 3 : 2 : repeated ? 0 : -1)),
+    trust: clamp(before.trust + (meaningful ? type === 'sing' ? 3 : 2 : 0)),
+    familiarity: clamp(before.familiarity + (meaningful ? 2 : 0)),
+    mood: clamp(before.mood + (meaningful ? 4 : 0), -100),
+    energy: clamp(before.energy - (meaningful ? type === 'sing' ? 8 : 3 : 0)),
+    comfort: clamp(before.comfort + (meaningful ? type === 'sing' ? 3 : 2 : 0)),
   };
-  return { id: randomUUID(), date, at: at.toISOString(), type, reply, before, after, meaningful, feeling };
+  return { id: randomUUID(), date, at: at.toISOString(), type,
+    reply: response?.reply ?? (accepted ? lines[type] : refusal),
+    before, after, meaningful, accepted, expression: response?.expression ?? expression(after),
+    reactionSource: response ? 'ai' : 'built-in' };
 }
 
 export const memoryTypes = ['core', 'event', 'shared', 'temporary'] as const;

@@ -4,3 +4,4 @@ dist/
 !.env.example
 .inori-data/
 .vercel/
+.DS_Store

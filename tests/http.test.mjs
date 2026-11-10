@@ -57,13 +57,13 @@ test('Mock HTTP 路徑支援串流、再生成、備份與最小權限 Widget', 
     portraits: [{ name: '日常', kind: 'expression', value: '普通', image }],
   });
   assert.equal(saved.status, 200);
-  await call(handler, '/api/state', { action: 'interaction', id: randomUUID(), type: 'hello' });
+  await call(handler, '/api/state', { action: 'interaction', id: randomUUID(), type: 'head' });
   assert.equal((await call(handler, '/api/widget', undefined, { authorization })).json.scene, undefined);
   const richWidget = await call(handler, '/api/state', { action: 'widget', enabled: true, details: true });
   const richAuth = { authorization: 'Bearer ' + richWidget.json.widgetToken };
   assert.equal((await call(handler, '/api/widget', undefined, { authorization })).status, 401);
   const scene = await call(handler, '/api/widget', undefined, richAuth);
-  assert.deepEqual(scene.json.scene, { interaction: '打招呼', portrait: image });
+  assert.deepEqual(scene.json.scene, { interaction: '摸頭', portrait: image });
   const backup = await call(handler, '/api/export');
   assert.equal(backup.json.widgetHash, undefined);
   assert.equal(backup.json.widgetDetails, undefined);
@@ -108,14 +108,16 @@ test('Supabase Auth / PostgREST 模擬整合，隔離帳號、重新登入、保
     const key = url.searchParams.get('key')?.slice(3) ?? body?.key;
     const row = rows.get(key);
     if (init.method === 'POST') {
+      assert.equal(url.searchParams.get('select'), 'revision');
       if (row) return Response.json([]);
       rows.set(key, body);
-      return Response.json([body]);
+      return Response.json([{ revision: body.revision }]);
     }
     if (init.method === 'PATCH') {
+      assert.equal(url.searchParams.get('select'), 'revision');
       if ('eq.' + row?.revision !== url.searchParams.get('revision')) return Response.json([]);
       rows.set(key, { ...row, ...body });
-      return Response.json([rows.get(key)]);
+      return Response.json([{ revision: body.revision }]);
     }
     return Response.json(row ? [row] : []);
   });

@@ -1,16 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { initialPersona, type Persona } from './character.js';
 import {
-  Problem, actionLabels, actions, currentState, dateAt, day, expireMemories, expression, feedbackTags, feelings, firstGreeting, fresh, interaction,
+  Problem, actionLabels, canAcceptInteraction, currentState, dateAt, day, expireMemories, expression, feedbackTags, firstGreeting, fresh, interaction, reactionExpressions, roomActions,
   invalidateContext, journalFor, object, retrieve, stage, text, timeZone, updateMemory, uuid, whole,
-  type AppData, type Feedback, type Journal, type Message,
+  type AppData, type Feedback, type InteractionReaction, type Journal, type Message, type RoomAction,
 } from './domain.js';
 import { cases, heldOut, testState, trialCheck, validatedPersona, type Studio, type Trial } from './evaluations.js';
 import { promptFor, type Provider } from './provider.js';
 import { change, digest, newToken, type Store } from './storage.js';
 import { exported, importBackup } from './backup.js';
 import { defaultDesign, designedPersona, designFormat, designTemplate, designVersion, validateDesign } from './design.js';
-import { activePortrait, portraitImage, portraitInfo, savePortraits } from './portraits.js';
+import { portraitImage, portraitInfo, roomScene, savePortraits } from './portraits.js';
 
 const newStudio = (): Studio => ({ active: initialPersona.config.version, personas: [initialPersona], runs: [] });
 
@@ -19,12 +19,12 @@ function view(data: AppData, now: Date, revision: number) {
   const today = dateAt(now, data.zone);
   const design = data.design ?? defaultDesign;
   const portraits = data.portraits?.map(portraitInfo) ?? null;
-  const face = expression(current);
+  const scene = roomScene(data, expression(current));
   return {
-    revision, design, portraits, activePortraitId: activePortrait(data, face),
+    revision, design, portraits, activePortraitId: scene.portrait?.id ?? null,
     designVersion: designVersion(design, portraits ?? undefined),
     nickname: data.nickname, meetDate: data.meetDate, zone: data.zone, state: current,
-    expression: face, stage: stage(current, data.memories.filter(m => m.type === 'shared').length),
+    expression: scene.expression, stage: stage(current, data.memories.filter(m => m.type === 'shared').length),
     today, context: data.context, todayCount: data.events.filter(event => event.date === today).length,
     messages: data.messages.slice(-180), events: data.events.slice(-80),
     memories: data.memories, feedbackIds: data.feedback.map(row => row.messageId), widgetEnabled: !!data.widgetHash, widgetDetails: data.widgetDetails === true,
@@ -71,6 +71,7 @@ export class Service {
   }
 
   async update(key: string, body: Record<string, unknown>) {
+    if (body.action === 'interaction') return this.interact(key, body);
     let widgetToken: string | undefined;
     const { data, revision } = await this.mutate(key, (data, now) => {
       switch (body.action) {
@@ -106,23 +107,6 @@ export class Service {
           data.memories = data.memories.filter(memory => memory.id !== id);
           data.memoryEvents.push({ id, at: now.toISOString(), action: 'delete' });
           invalidateContext(data, [id]);
-          break;
-        }
-        case 'interaction': {
-          const id = uuid(body.id);
-          if (data.receipts.some(row => row.id === id)) break;
-          const type = actions.find(type => type === body.type);
-          if (!type) throw new Problem(400, '未知的互動。');
-          if (data.events.length >= 3000) throw new Problem(409, '互動紀錄已達上限，請先備份。');
-          const feeling = type === 'feeling' ? feelings.find(value => value === body.feeling) : undefined;
-          if (body.feeling !== undefined && !feeling) throw new Problem(400, '請選擇有效的心情。');
-          const event = interaction(type, currentState(data, now), data.events, now, data.zone, feeling);
-          if (type === 'hello' && data.design?.greeting) event.reply = data.design.greeting;
-          data.events.push(event);
-          data.lastActivity = 'interaction';
-          data.state = event.after!;
-          data.stateDate = event.date;
-          record(data, { id, kind: 'interaction', targetId: event.id });
           break;
         }
         case 'feedback': {
@@ -208,6 +192,84 @@ export class Service {
 
   private async release(key: string, id: string) {
     await this.mutate(key, data => { if (data.pending?.id === id) data.pending = null; });
+  }
+
+  private async interact(key: string, body: Record<string, unknown>) {
+    const id = uuid(body.id);
+    const action = roomActions.find(action => action === body.type);
+    if (!action) throw new Problem(400, '請選擇摸頭、牽手、擁抱或唱歌。');
+    const provider = this.provider();
+    if (provider.model === 'mock') return this.finishInteraction(key, id, action);
+
+    const studio = await this.studio();
+    const baseline = studio.personas.find(p => p.config.version === studio.active)!;
+    const prepare = (data: AppData, now: Date) => {
+      if (data.events.length >= 3000) throw new Problem(409, '互動紀錄已達上限，請先備份。');
+      const state = currentState(data, now);
+      const mayAccept = canAcceptInteraction(action, state);
+      const history = data.messages.filter(message => message.context === data.context).slice(-8)
+        .map(({ role, content }) => ({ role, content }));
+      const context = {
+        nickname: data.nickname, state, stage: stage(state, data.memories.filter(m => m.type === 'shared').length),
+        recent: data.events.filter(event => !event.legacy).slice(-4).map(event => ({
+          action: actionLabels[event.type], accepted: event.accepted,
+        })),
+      };
+      const persona = designedPersona(baseline, data.design ?? defaultDesign);
+      const prompt = promptFor(persona, context, history, '使用者點了房間互動「' + actionLabels[action] + '」。', data.design ?? undefined);
+      prompt.instructions += '\n\n本次是虛構房間互動。依角色設定、關係及情境回一句自然的繁體中文台詞。' +
+        '你可以婉拒，保有自主；婉拒或想再等等時 accepted 是 false。' +
+        (mayAccept ? '目前可自行選擇是否接受。' : '房間規則要求本次婉拒，accepted 必須是 false，台詞也須婉拒。') +
+        '唱歌時以文字互動，不聲稱已播放音訊。請只回傳 JSON 物件 ' +
+        '{"reply":"一句台詞","expression":"普通","accepted":false}。expression 只能是 ' + reactionExpressions.join('、') + '。';
+      return { prompt, context: data.context };
+    };
+    let reserved;
+    try { reserved = await this.reserve(key, id, prepare); }
+    catch (error) {
+      if (error instanceof Problem && error.status === 429) return this.finishInteraction(key, id, action);
+      throw error;
+    }
+    if (reserved.prior) {
+      if (reserved.prior.kind !== 'interaction') throw new Problem(409, '請求識別碼已使用。');
+      return this.session(key);
+    }
+
+    const prepared = reserved.prepared!;
+    try {
+      let reaction;
+      try { reaction = parseReaction(await provider.generate(prepared.prompt)); }
+      catch { /* A safe built-in reaction is available if generation or validation fails. */ }
+      return await this.finishInteraction(key, id, action, { reaction, context: prepared.context });
+    } catch (error) {
+      await this.release(key, id).catch(() => {});
+      throw error;
+    }
+  }
+
+  private async finishInteraction(key: string, id: string, action: RoomAction, generation?: { context: number; reaction?: InteractionReaction }) {
+    const { data, revision } = await this.mutate(key, (data, now) => {
+      const prior = data.receipts.find(row => row.id === id);
+      if (prior) {
+        if (prior.kind !== 'interaction') throw new Problem(409, '請求識別碼已使用。');
+        return;
+      }
+      if (generation && (data.pending?.id !== id || data.context !== generation.context)) {
+        throw new Problem(409, '房間資料剛更新。請重新互動。');
+      }
+      if (!generation && data.pending && data.pending.until > now.getTime()) {
+        throw new Problem(409, '已有生成請求，請稍候。');
+      }
+      if (data.events.length >= 3000) throw new Problem(409, '互動紀錄已達上限，請先備份。');
+      const event = interaction(action, currentState(data, now), data.events, now, data.zone, generation?.reaction);
+      data.events.push(event);
+      data.lastActivity = 'interaction';
+      data.state = event.after!;
+      data.stateDate = event.date;
+      if (generation) data.pending = null;
+      record(data, { id, kind: 'interaction', targetId: event.id });
+    });
+    return view(data, this.now(), revision);
   }
 
   async chat(key: string, body: Record<string, unknown>, delta?: (s: string) => void) {
@@ -360,16 +422,14 @@ export class Service {
     const anniversary = days > 1 && today.slice(5) === data.meetDate.slice(5);
     const greeting = anniversary ? '今天是我們的相遇紀念日。' : hour < 6 ? '夜深了。早點休息吧。'
       : hour < 12 ? '早安。睡得還好嗎？' : hour < 18 ? '午安。記得休息一下。' : '晚安。今天辛苦了。';
-    const mood = expression(currentState(data, now));
+    const scene = roomScene(data, expression(currentState(data, now)));
     const summary = { name: (data.design ?? defaultDesign).name,
       greeting: anniversary ? greeting : data.design?.greeting || greeting,
-      days, anniversary, mood };
+      days, anniversary, mood: scene.expression };
     if (!data.widgetDetails) return summary;
-    const selected = activePortrait(data, mood);
-    const portrait = data.portraits?.find(item => item.id === selected);
     const recent = data.events.findLast(event => !event.legacy);
     return { ...summary, scene: {
-      portrait: portrait?.image ?? null,
+      portrait: scene.portrait?.image ?? null,
       interaction: recent ? actionLabels[recent.type] : null,
     } };
   }
@@ -398,4 +458,12 @@ export class Service {
 function record(data: AppData, receipt: AppData['receipts'][number]) {
   data.receipts.push(receipt);
   data.receipts = data.receipts.slice(-160);
+}
+
+function parseReaction(raw: string): InteractionReaction {
+  const clean = raw.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, '$1');
+  const value = object(JSON.parse(clean));
+  const face = reactionExpressions.find(face => face === value.expression);
+  if (!face || typeof value.accepted !== 'boolean') throw new Error('AI 互動回覆格式不正確');
+  return { reply: text(value.reply, 200), expression: face, accepted: value.accepted };
 }

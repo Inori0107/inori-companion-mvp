@@ -1,7 +1,6 @@
-import { $, api, button, node, option } from './client.js';
+import { $, api, button, node } from './client.js';
 
 const expressions = ['普通', '微笑', '難過', '困惑', '害羞', '疲憊', '平靜'];
-const kinds = { expression: '表情', interaction: '互動動作', keyword: '對話關鍵字' };
 const countLimit = 14;
 const imageLimit = 100 * 1024;
 const accepted = 'image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif';
@@ -81,13 +80,6 @@ async function compressed(source) {
   throw new Error('無法壓縮這張立繪，請換一張較小的圖片。');
 }
 
-function label(title, field) {
-  const wrapper = node('label', title);
-  field.setAttribute('aria-label', title);
-  wrapper.append(field);
-  return wrapper;
-}
-
 export async function prepareLegacyPortraits(images) {
   return Promise.all(Object.entries(legacyImages(images)).map(async ([value, source]) => ({
     name: '', kind: 'expression', value, image: await compressed(source),
@@ -95,30 +87,63 @@ export async function prepareLegacyPortraits(images) {
 }
 
 export function createPortraitEditor(actions, onChange) {
-  const list = $('portraitRows');
-  const add = $('addPortrait');
+  const defaultSlot = { kind: 'expression', value: '普通', title: '預設立繪' };
+  const faces = [
+    { kind: 'expression', value: '微笑', title: '微笑' },
+    { kind: 'expression', value: '害羞', title: '害羞' },
+    { kind: 'expression', value: '難過', title: '低落' },
+  ];
+  const gestures = ['head', 'hand', 'hug', 'sing'].map(value => ({ kind: 'interaction', value, title: actions[value] }));
+  const groups = [
+    [$('portraitRows'), [defaultSlot]], [$('portraitExpressions'), faces], [$('portraitActions'), gestures],
+  ];
+  const legacyList = $('portraitLegacyRows');
+  const legacyPanel = $('portraitLegacy');
   let draft = [];
   let initialized = false;
-  const options = { expression: expressions.map(value => [value, value]), interaction: Object.entries(actions) };
+  const hasImage = item => Boolean(item.id || item.image || item.legacy || item.pending);
 
-  function syncAdd() { add.disabled = draft.length >= countLimit; }
-
-  function makeRow(item) {
-    const row = node('article', undefined, 'portrait-row');
+  function makeRow(item, title, retired = false) {
+    const row = node('article', undefined, 'portrait-row portrait-slot');
+    row.setAttribute('aria-label', title);
     const preview = node('img', undefined, 'portrait-thumb');
     preview.alt = '';
-    preview.loading = 'lazy';
     const status = node('p', '', 'hint portrait-row-status');
     status.setAttribute('aria-live', 'polite');
     let previewVersion = 0;
+    const file = node('input');
+    file.type = 'file';
+    file.accept = accepted;
+    file.hidden = true;
+    file.setAttribute('aria-label', title + '檔案');
+    const select = button('選擇圖片', () => file.click());
+    select.setAttribute('aria-label', title + '・選擇圖片');
+    select.hidden = retired;
+    const remove = button('移除', () => {
+      if (retired) {
+        draft = draft.filter(value => value !== item);
+        row.remove();
+        legacyPanel.hidden = !legacyList.children.length;
+      } else {
+        delete item.id;
+        delete item.image;
+        delete item.legacy;
+        showImage();
+      }
+      onChange();
+    });
+    remove.setAttribute('aria-label', title + '・移除');
     preview.onerror = () => {
       preview.hidden = true;
       status.textContent = '圖片無法解碼，請重新選擇 PNG 或 JPG。';
     };
+
     function showImage() {
       const version = ++previewVersion;
       const src = item.image || item.legacy;
       preview.hidden = !src;
+      remove.hidden = !hasImage(item);
+      select.textContent = hasImage(item) ? '更換圖片' : '選擇圖片';
       if (src) preview.src = src;
       else preview.removeAttribute('src');
       status.textContent = item.legacy ? '舊版立繪・儲存後同步' : item.image ? '圖片已加入草稿'
@@ -130,56 +155,12 @@ export function createPortraitEditor(actions, onChange) {
         status.textContent = '已儲存';
       }).catch(error => {
         if (version !== previewVersion) return;
-        status.textContent = '已儲存，但圖片讀取失敗' + (error.status ? '（HTTP ' + error.status + '）' : '') + '。';
+        status.textContent = '圖片讀取失敗' + (error.status ? '（HTTP ' + error.status + '）' : '') + '。' +
+          (error.status === 404 ? ' 請重新整理房間，或更換這張圖片。' : '');
       });
     }
     showImage();
 
-    const name = node('input');
-    name.maxLength = 32;
-    name.value = item.name;
-    name.placeholder = '選填';
-    name.oninput = () => { item.name = name.value; onChange(); };
-    const kind = node('select');
-    kind.append(...Object.entries(kinds).map(([value, title]) => option(title, value)));
-    kind.value = item.kind;
-    const trigger = node('select');
-    const keyword = node('input');
-    keyword.maxLength = 40;
-    keyword.placeholder = '例如：唱歌';
-    const choiceField = label('對應表情或動作', trigger);
-    const keywordField = label('對話關鍵字', keyword);
-    function showTrigger() {
-      keywordField.hidden = item.kind !== 'keyword';
-      choiceField.hidden = !keywordField.hidden;
-      if (item.kind === 'keyword') keyword.value = item.value;
-      else {
-        trigger.replaceChildren(...options[item.kind].map(([value, title]) => option(title, value)));
-        trigger.value = item.value;
-      }
-    }
-    showTrigger();
-    kind.onchange = () => {
-      item.kind = kind.value;
-      item.value = options[item.kind]?.[0]?.[0] ?? '';
-      showTrigger();
-      onChange();
-    };
-    trigger.onchange = () => { item.value = trigger.value; onChange(); };
-    keyword.oninput = () => { item.value = keyword.value; onChange(); };
-
-    const file = node('input');
-    file.type = 'file';
-    file.accept = accepted;
-    file.hidden = true;
-    file.setAttribute('aria-label', '立繪檔案');
-    const select = button('選擇圖片', () => file.click());
-    const remove = button('移除', () => {
-      draft = draft.filter(value => value !== item);
-      row.remove();
-      syncAdd();
-      onChange();
-    });
     file.onchange = async () => {
       const source = file.files[0];
       file.value = '';
@@ -188,10 +169,12 @@ export function createPortraitEditor(actions, onChange) {
         status.textContent = '請選擇 20 MB 以下的點陣圖片。';
         return;
       }
+      previewVersion++;
       status.textContent = '正在準備圖片……';
       onChange();
       select.disabled = true;
-      item.pending = compressedFile(source);
+      remove.disabled = true;
+      item.pending = readImageFile(source).then(compressed);
       try {
         item.image = await item.pending;
         delete item.legacy;
@@ -201,56 +184,52 @@ export function createPortraitEditor(actions, onChange) {
       } finally {
         delete item.pending;
         select.disabled = false;
+        remove.disabled = false;
       }
     };
-    const imageControls = node('div', undefined, 'portrait-image-controls');
     const controls = node('div', undefined, 'toolbar');
     controls.append(select, remove);
-    imageControls.append(preview, status, controls, file);
-    const fields = node('div', undefined, 'portrait-fields');
-    fields.append(label('立繪名稱', name), label('觸發方式', kind), choiceField, keywordField);
-    row.append(imageControls, fields);
+    const content = node('div', undefined, 'portrait-slot-content');
+    content.append(node('strong', title), status, controls, file);
+    row.append(preview, content);
     return row;
   }
 
-  async function compressedFile(file) { return compressed(await readImageFile(file)); }
-
-  add.onclick = () => {
-    if (draft.length >= countLimit) return;
-    const unused = kind => options[kind].find(([value]) => !draft.some(item => item.kind === kind && item.value === value))?.[0];
-    const expression = unused('expression');
-    const interaction = unused('interaction');
-    const kind = expression ? 'expression' : interaction ? 'interaction' : 'keyword';
-    const item = { name: '', kind, value: expression ?? interaction ?? '' };
-    draft.push(item);
-    onChange();
-    const row = makeRow(item);
-    list.append(row);
-    syncAdd();
-    row.querySelector('button').focus();
-  };
+  function clear() {
+    draft = [];
+    for (const [list] of groups) list.replaceChildren();
+    legacyList.replaceChildren();
+    legacyPanel.hidden = true;
+  }
 
   return {
     open(portraits, legacy) {
-      initialized = Array.isArray(portraits);
-      draft = initialized ? portraits.map(item => ({ ...item })) : Object.entries(legacyImages(legacy))
+      clear();
+      const stored = Array.isArray(portraits) ? portraits.map(item => ({ ...item })) : Object.entries(legacyImages(legacy))
         .map(([value, image]) => ({ name: '', kind: 'expression', value, legacy: image }));
-      initialized ||= draft.length > 0;
-      list.replaceChildren(...draft.map(makeRow));
-      syncAdd();
+      initialized = Array.isArray(portraits) || stored.length > 0;
+      for (const [list, slots] of groups) {
+        for (const slot of slots) {
+          const index = stored.findIndex(item => item.kind === slot.kind && item.value === slot.value);
+          const item = index < 0 ? { kind: slot.kind, value: slot.value, name: '' } : stored.splice(index, 1)[0];
+          draft.push(item);
+          list.append(makeRow(item, slot.title));
+        }
+      }
+      draft.push(...stored);
+      legacyList.replaceChildren(...stored.map(item => makeRow(item, item.name || actions[item.value] || item.value, true)));
+      legacyPanel.hidden = !stored.length;
     },
-    clear() {
-      draft = [];
-      list.replaceChildren();
-    },
+    clear,
     async payload() {
-      if (!initialized && !draft.length) return undefined;
-      return Promise.all(draft.map(async item => {
+      const filled = draft.filter(hasImage);
+      if (!initialized && !filled.length) return undefined;
+      if (filled.length > countLimit) throw new Error('最多可儲存 14 張立繪。請先移除不用的舊圖。');
+      return Promise.all(filled.map(async item => {
         await item.pending;
         const { id, name, kind, value } = item;
         const image = item.image || (item.legacy ? await compressed(item.legacy) : undefined);
-        if (!value.trim()) throw new Error('請填入每張立繪的觸發條件。');
-        if (!id && !image) throw new Error('請為每張新增立繪選擇圖片。');
+        if (!id && !image) throw new Error('請為這個位置選擇圖片。');
         return { id, name, kind, value, image };
       }));
     },

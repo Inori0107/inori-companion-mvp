@@ -74,10 +74,10 @@ export function supabaseStore(cloud: Cloud): Store {
     async put(key, expected, data) {
       const record = { revision: (expected ?? 0) + 1, data };
       const rows: unknown[] = expected === null
-        ? await request(new URLSearchParams({ on_conflict: 'key' }), {
+        ? await request(new URLSearchParams({ select: 'revision', on_conflict: 'key' }), {
           method: 'POST', body: JSON.stringify({ ...record, key }),
         })
-        : await request(new URLSearchParams({ key: 'eq.' + key, revision: 'eq.' + expected }), {
+        : await request(new URLSearchParams({ select: 'revision', key: 'eq.' + key, revision: 'eq.' + expected }), {
           method: 'PATCH', body: JSON.stringify(record),
         });
       return rows.length === 1;

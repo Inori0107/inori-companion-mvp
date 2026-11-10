@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { fresh, initialState, interaction, expression, stage, retrieve, updateMemory, expireMemories } from '../dist/domain.js';
+import { fresh, initialState, interaction, stage, retrieve, updateMemory, expireMemories } from '../dist/domain.js';
 import { initialPersona } from '../dist/character.js';
 import { makeProvider, promptFor } from '../dist/provider.js';
 import { cases, heldOut, trialCheck } from '../dist/evaluations.js';
@@ -22,10 +22,13 @@ test('五維狀態以舒適程度及互動品質反應，重複互動不刷信�
   assert.equal(music.meaningful, true);
   assert.equal(repeated.meaningful, false);
   assert.equal(repeated.after.trust, music.after.trust);
-  const shared = interaction('feeling', initialState, [], date, 'Asia/Taipei', 'down');
-  assert.equal(shared.feeling, 'down');
-  assert.equal(expression(shared.after), '難過');
-  assert.match(shared.reply, /安靜/);
+  const head = interaction('head', initialState, [], date, 'Asia/Taipei');
+  assert.equal(head.accepted, true);
+  const declined = interaction('head', initialState, [], date, 'Asia/Taipei',
+    { accepted: false, expression: '害羞', reply: '等一下，好嗎？' });
+  assert.equal(declined.accepted, false);
+  assert.equal(declined.expression, '害羞');
+  assert.deepEqual(declined.after, initialState);
   assert.equal(stage({ trust: 100, familiarity: 100, mood: 100, energy: 100, comfort: 100 }, 0), '熟悉');
   assert.equal(stage({ trust: 100, familiarity: 100, mood: 100, energy: 100, comfort: 100 }, 6), '深厚陪伴');
 });
@@ -112,13 +115,17 @@ test('日記只接受已保存的事件 ID 與受限結語', async () => {
   let answer;
   let now = new Date(date);
   const service = new Service(localStore(), () => ({ model: 'test', async generate(prompt) {
+    if (prompt.input.at(-1)?.content.includes('房間互動')) {
+      return JSON.stringify({ reply: '一起試試吧。', accepted: true, expression: '微笑' });
+    }
     const { events } = JSON.parse(prompt.input[0].content);
     return JSON.stringify({ ids: [answer ?? events[0].id], reflection: 1, other: '捏造的現實旅行' });
   } }), 12, [], () => now);
   await assert.rejects(service.diary('local', { id: randomUUID(), date: '2026-11-09' }), /沒有/);
   await service.update('local', { action: 'interaction', id: randomUUID(), type: 'sing' });
+  now = new Date(now.getTime() + 1000);
   const journal = await service.diary('local', { id: randomUUID(), date: '2026-11-09' });
-  assert.match(journal.content, /一起唱歌/);
+  assert.match(journal.content, /唱歌/);
   assert.doesNotMatch(journal.content, /旅行/);
   assert.equal(journal.eventIds.length, 1);
   now = new Date(now.getTime() + 1000);
@@ -197,7 +204,7 @@ test('角色範本只輸出公開欄位，私人備份可還原角色設計', as
   assert.equal(restored.widgetEnabled, false);
 });
 
-test('角色與多張立繪原子儲存，依最新對話或互動套用，備份可還原', async () => {
+test('角色與多張立繪原子儲存，舊關鍵字保留，只有接受的動作可切圖', async () => {
   let now = new Date(date);
   const bytes = await readFile(new URL('../public/icon-192.png', import.meta.url));
   const image = 'data:image/png;base64,' + bytes.toString('base64');
@@ -212,7 +219,7 @@ test('角色與多張立繪原子儲存，依最新對話或互動套用，備�
   assert.equal((await service.session('local')).design.name, initial.design.name);
   const saved = await service.update('local', {
     action: 'design', expectedVersion: initial.designVersion, design,
-    portraits: [portrait('基本', 'expression', '普通'), portrait('揮手', 'interaction', 'hello'), portrait('月亮', 'keyword', '月亮')],
+    portraits: [portrait('基本', 'expression', '普通'), portrait('摸頭圖', 'interaction', 'head'), portrait('月亮', 'keyword', '月亮')],
   });
   const [base, action, keyword] = saved.portraits;
   assert.equal(saved.activePortraitId, base.id);
@@ -221,11 +228,13 @@ test('角色與多張立繪原子儲存，依最新對話或互動套用，備�
     action: 'design', expectedVersion: saved.designVersion, design,
     portraits: [portrait('第一張', 'keyword', 'ｍｏｏｎ'), portrait('第二張', 'keyword', 'MOON')],
   }), /只能指定一張/);
-  const hello = await service.update('local', { action: 'interaction', id: randomUUID(), type: 'hello' });
-  assert.equal(hello.activePortraitId, action.id);
+  const head = await service.update('local', { action: 'interaction', id: randomUUID(), type: 'head' });
+  assert.equal(head.activePortraitId, action.id);
+  await assert.rejects(service.update('local', { action: 'interaction', id: randomUUID(), type: 'hello' }), error => error.status === 400);
   now = new Date(now.getTime() + 1000);
   const talked = await service.chat('local', chat('一起看月亮吧'));
-  assert.equal(talked.activePortraitId, keyword.id);
+  assert.equal(talked.activePortraitId, base.id);
+  assert.equal(talked.portraits.at(-1).id, keyword.id);
   now = new Date(now.getTime() + 1000);
   const next = await service.chat('local', chat('你好'));
   assert.equal(next.activePortraitId, base.id);
@@ -241,4 +250,60 @@ test('角色與多張立繪原子儲存，依最新對話或互動套用，備�
   assert.equal(restored.portraits[0].name, '基本');
   assert.notEqual(restored.portraits[0].id, base.id);
   assert.equal((await service.portrait('other', restored.portraits[0].id)).mime, 'image/png');
+});
+
+test('AI 互動讀取關係及角色，依界線切換立繪，重試及無效回覆安全回退', async () => {
+  let now = new Date(date);
+  const prompts = [];
+  let fail = false;
+  const store = localStore();
+  const source = await readFile(new URL('../public/icon-192.png', import.meta.url));
+  const image = 'data:image/png;base64,' + source.toString('base64');
+  const service = new Service(store, () => ({ model: 'test', async generate(prompt) {
+    prompts.push(prompt);
+    if (fail) return '{"reply":"錯誤欄位","expression":"外部 URL","accepted":true}';
+    return JSON.stringify({ reply: '我可以牽著你。', expression: '微笑', accepted: true });
+  } }), 12, [], () => now);
+  const freshRoom = await service.session('local');
+  const configured = await service.update('local', {
+    action: 'design', expectedVersion: freshRoom.designVersion, design: { ...freshRoom.design, name: '霧島' },
+    portraits: [
+      { kind: 'expression', value: '普通', image },
+      { kind: 'expression', value: '微笑', image },
+      { kind: 'interaction', value: 'hand', image },
+    ],
+  });
+  const [ordinary, smile, hand] = configured.portraits;
+  const id = randomUUID();
+  const first = await service.update('local', { action: 'interaction', type: 'hand', id });
+  assert.match(prompts[0].input[0].content, /"stage":"初識"/);
+  assert.match(JSON.stringify(prompts[0].input), /霧島/);
+  assert.match(prompts[0].instructions, /本次婉拒/);
+  assert.equal(first.events.at(-1).accepted, false);
+  assert.match(first.events.at(-1).reply, /距離/);
+  assert.equal(first.activePortraitId, ordinary.id);
+  const retry = await service.update('local', { action: 'interaction', type: 'hand', id });
+  assert.equal(retry.events.length, 1);
+  assert.equal(prompts.length, 1);
+
+  const existing = await store.get('local');
+  existing.data.state.familiarity = 27;
+  existing.data.state.comfort = 38;
+  assert.ok(await store.put('local', existing.revision, existing.data));
+  now = new Date(now.getTime() + 1000);
+  const second = await service.update('local', { action: 'interaction', type: 'hand', id: randomUUID() });
+  assert.match(prompts[1].input[0].content, /"stage":"熟悉"/);
+  assert.equal(second.events.at(-1).reply, '我可以牽著你。');
+  assert.equal(second.events.at(-1).accepted, true);
+  assert.equal(second.expression, '微笑');
+  assert.equal(second.activePortraitId, hand.id);
+
+  now = new Date(now.getTime() + 1000);
+  const head = await service.update('local', { action: 'interaction', type: 'head', id: randomUUID() });
+  assert.equal(head.activePortraitId, smile.id);
+  now = new Date(now.getTime() + 1000);
+  fail = true;
+  const fallback = await service.update('local', { action: 'interaction', type: 'sing', id: randomUUID() });
+  assert.equal(fallback.events.at(-1).reply, '從你熟悉的旋律開始吧。');
+  assert.equal((await service.read('local')).pending, null);
 });

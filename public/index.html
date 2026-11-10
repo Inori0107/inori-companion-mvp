@@ -66,20 +66,13 @@
     <section id="panel-touch" class="panel">
       <p class="section-label">INTERACTIONS / 日常互動</p>
       <div class="touch-grid">
-        <button data-touch="hello">✦<span>打招呼</span></button>
-        <button data-touch="head">✧<span>摸摸頭</span></button>
+        <button data-touch="head">✧<span>摸頭</span></button>
         <button data-touch="hand">♡<span>牽手</span></button>
         <button data-touch="hug">☁<span>擁抱</span></button>
-        <button data-touch="listen">♪<span>聽歌</span></button>
-        <button data-touch="sing">♫<span>一起唱歌</span></button>
-        <button data-touch="feeling">◇<span>分享心情</span></button>
-      </div>
-      <div class="toolbar feeling-options" id="feelingOptions" aria-label="選擇想分享的心情" hidden>
-        <button class="quiet" data-feeling="good">今天不錯</button>
-        <button class="quiet" data-feeling="tired">有點累</button>
-        <button class="quiet" data-feeling="down">有點低落</button>
+        <button data-touch="sing">♫<span>唱歌</span></button>
       </div>
       <p class="reaction" id="reaction" role="status">「……想做什麼？」</p>
+      <p class="hint" id="interactionMode" hidden></p>
       <button class="quiet" id="saveShared" hidden>檢視並保存共同記憶</button>
     </section>
     <section id="panel-memory" class="panel">
@@ -164,9 +157,23 @@
     </details>
     <section class="setting-group" aria-labelledby="portraitHeading">
       <h3 id="portraitHeading">立繪</h3>
-      <p class="hint">逐張選擇圖片，指定表情、互動或對話關鍵字。按下方「儲存角色」後才會套用，登入同一帳號的裝置可共用。</p>
+      <p class="hint">設定一張預設立繪就能使用。按下方「儲存角色」套用。</p>
       <div id="portraitRows" class="portrait-rows"></div>
-      <button class="quiet" id="addPortrait" type="button">＋ 新增一張立繪</button>
+      <details class="setting-group">
+        <summary>其他表情（選填）</summary>
+        <p class="hint">角色回應時會選擇表情，沒有對應圖就使用預設立繪。</p>
+        <div id="portraitExpressions" class="portrait-rows"></div>
+      </details>
+      <details class="setting-group">
+        <summary>動作專用圖（選填）</summary>
+        <p class="hint">角色接受對應的動作時，優先顯示這張圖。</p>
+        <div id="portraitActions" class="portrait-rows"></div>
+      </details>
+      <details class="setting-group" id="portraitLegacy" hidden>
+        <summary>舊版立繪</summary>
+        <p class="hint">這些圖片仍可預覽和備份。舊關鍵字規則已停止自動換圖。</p>
+        <div id="portraitLegacyRows" class="portrait-rows"></div>
+      </details>
     </section>
     <button class="quiet" id="restoreDesign" type="button">載入預設角色文字</button>
     <p class="hint">角色文字和立繪會一起儲存。變更角色文字後會開啟新的對話上下文，歷史和記憶仍留在房間。</p>

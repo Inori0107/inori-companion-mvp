@@ -8,7 +8,7 @@ const designInputs = { base: 'designBase', name: 'designName', greeting: 'design
 const baseLabels = { inori: 'THE QUIET DIVERGENCE', original: 'ORIGINAL CHARACTER' };
 const defaultDesign = { base: 'inori', name: '楪祈', greeting: '', world: '', personality: '', voice: '' };
 const memoryLabels = { core: '核心', event: '事件', temporary: '短期', shared: '共同' };
-const actionLabels = { hello: '打招呼', head: '摸頭', hand: '牽手', hug: '擁抱', sing: '一起唱歌', listen: '聽歌', feeling: '分享心情' };
+const actionLabels = { hello: '打招呼', head: '摸頭', hand: '牽手', hug: '擁抱', sing: '唱歌', listen: '聽歌', feeling: '分享心情' };
 const diaryLabels = { ai: 'AI 日記', summary: '事件摘要', example: '固定示範' };
 let state;
 let health;
@@ -18,6 +18,7 @@ let candidate;
 let memoryDraft;
 let ratedId;
 let retry;
+let interactionRetry;
 let diarySequence = 0;
 let sessionEpoch = 0;
 let editingVersion;
@@ -68,7 +69,7 @@ function renderPortrait() {
   const fallback = legacy[state.expression] || legacy.普通 || '';
   const target = id || fallback;
   if (!target) portraitStatus.textContent = portraits.length || Object.keys(legacy).length
-    ? '目前無符合立繪。可設定「普通」當預設。' : '可在「自訂角色」新增立繪';
+    ? '目前無符合立繪。可在「自訂角色」設定預設立繪。' : '可在「自訂角色」新增立繪';
   if (target === portraitTarget) return;
   portraitTarget = target;
   const request = ++portraitRequest;
@@ -92,6 +93,7 @@ function showLogin() {
   state = undefined;
   candidate = undefined;
   retry = undefined;
+  interactionRetry = undefined;
   $('messages').replaceChildren();
   $('memoryList').replaceChildren();
   $('diaryText').textContent = '';
@@ -100,7 +102,6 @@ function showLogin() {
   $('diaryDate').value = '';
   $('messageInput').value = '';
   $('chatStatus').textContent = '';
-  $('feelingOptions').hidden = true;
   portraitTarget = null;
   portraitRequest++;
   keepPortraits([]);
@@ -221,11 +222,15 @@ function renderMemories() {
 function renderInteraction() {
   const last = state.events.at(-1);
   $('reaction').textContent = last ? '「' + last.reply + '」' : '「……想做什麼？」';
+  const hint = !health.aiConfigured ? '目前是示範模式，啟用 OpenAI 後會依關係與情境生成回應。'
+    : last?.reactionSource === 'built-in' ? '這次使用備用回應。' : '';
+  $('interactionMode').textContent = hint;
+  $('interactionMode').hidden = !hint;
   $('saveShared').hidden = !last?.meaningful || state.memories.some(memory => memory.eventId === last.id);
 }
 
 function disableInteractions(disabled) {
-  document.querySelectorAll('[data-touch], [data-feeling]').forEach(btn => { btn.disabled = disabled; });
+  document.querySelectorAll('[data-touch]').forEach(btn => { btn.disabled = disabled; });
 }
 
 function render(scroll = true, previous) {
@@ -345,13 +350,17 @@ $('chatForm').addEventListener('submit', event => {
   if (message) void sendChat({ message });
 });
 
-async function interact(type, feeling) {
+async function interact(type) {
   if (busy || sending) return;
   busy = true;
   disableInteractions(true);
+  if (interactionRetry?.type !== type) interactionRetry = { type, id: requestId() };
+  $('reaction').textContent = state.design.name + '正在回應……';
+  $('interactionMode').hidden = true;
+  $('saveShared').hidden = true;
   try {
-    await update({ action: 'interaction', type, feeling, id: requestId() });
-    $('feelingOptions').hidden = true;
+    await update({ action: 'interaction', ...interactionRetry });
+    interactionRetry = undefined;
   } catch (error) { sessionError(error, 'reaction'); }
   finally {
     busy = false;
@@ -360,13 +369,7 @@ async function interact(type, feeling) {
 }
 
 document.querySelectorAll('[data-touch]').forEach(btn => {
-  btn.onclick = () => {
-    if (btn.dataset.touch === 'feeling') $('feelingOptions').hidden = !$('feelingOptions').hidden;
-    else void interact(btn.dataset.touch);
-  };
-});
-document.querySelectorAll('[data-feeling]').forEach(btn => {
-  btn.onclick = () => interact('feeling', btn.dataset.feeling);
+  btn.onclick = () => interact(btn.dataset.touch);
 });
 
 function openMemory(existing = {}) {
@@ -620,6 +623,7 @@ settingsAction('resetBtn', async () => {
   clearLegacyPortraits();
   candidate = undefined;
   retry = undefined;
+  interactionRetry = undefined;
   $('diaryDate').value = state.today;
   $('diaryText').textContent = '';
   $('diaryKind').textContent = '';
